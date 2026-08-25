@@ -1,0 +1,14 @@
+# Data that belongs to the user, not to the code
+data/
+demo/
+build/
+tests/media/
+
+# Environments and engine binaries (multi gigabyte, fetched separately)
+.venv/
+.venv-convert/
+bin/
+assets/fonts/
+
+__pycache__/
+*.pyc

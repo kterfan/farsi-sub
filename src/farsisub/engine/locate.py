@@ -1,0 +1,137 @@
+"""Find the whisper.cpp binary, the VAD model, and the downloaded ASR models.
+
+Layout used at runtime:
+
+    <install dir>/bin/whisper-cli.exe          shipped in the installer
+    <install dir>/bin/ggml-silero-v5.1.2.bin   shipped (885 KB, no reason to download)
+    %LOCALAPPDATA%/FarsiSub/models/*.bin       downloaded on first run
+
+During development everything can be overridden with environment variables so
+the same code runs from a source checkout.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+APP_NAME = "FarsiSub"
+
+MODEL_FILES = {
+    "large-v3": "ggml-large-v3.bin",
+    "large-v3-q5_0": "ggml-large-v3-q5_0.bin",
+    "large-v3-turbo": "ggml-large-v3-turbo.bin",
+    "large-v3-turbo-q8_0": "ggml-large-v3-turbo-q8_0.bin",
+    "large-v3-turbo-q5_0": "ggml-large-v3-turbo-q5_0.bin",
+}
+
+
+def install_dir() -> Path:
+    """Directory the app runs from, whether frozen by PyInstaller or not."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[3]
+
+
+def bin_dir() -> Path:
+    return Path(os.environ.get("FARSISUB_BIN", install_dir() / "bin"))
+
+
+def data_dir() -> Path:
+    """Where models, logs, projects and the glossary live.
+
+    Next to the application by default, on purpose. %LOCALAPPDATA% looks like
+    the obvious home, but it is redirected for sandboxed processes: a model
+    downloaded by one process landed in a container private folder and was
+    invisible to the app the user actually launched. A path beside the program
+    means every process sees the same files.
+
+    Falls back to %LOCALAPPDATA% when the program folder is read only, which is
+    what a Program Files install will be.
+    """
+    override = os.environ.get("FARSISUB_DATA")
+    if override:
+        return Path(override)
+
+    local = install_dir() / "data"
+    try:
+        local.mkdir(parents=True, exist_ok=True)
+        probe = local / ".writable"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+        return local
+    except OSError:
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
+        return Path(base) / APP_NAME
+
+
+def projects_dir() -> Path:
+    """Where .fsub project files live.
+
+    Deliberately NOT next to the video: a JSON sitting beside the subtitle
+    looks like a broken subtitle, and subtitle editors will happily open it as
+    one word per line.
+    """
+    path = data_dir() / "projects"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def project_path(video: str | Path) -> Path:
+    """Stable name per video, including a hash so two files called
+    `001.mp4` in different folders do not overwrite each other."""
+    import hashlib
+
+    video = Path(video)
+    digest = hashlib.sha1(str(video.resolve()).encode("utf-8")).hexdigest()[:8]
+    return projects_dir() / f"{video.stem}-{digest}.fsub"
+
+
+def models_dir() -> Path:
+    path = data_dir() / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def whisper_binary() -> Path | None:
+    name = "whisper-cli.exe" if os.name == "nt" else "whisper-cli"
+    candidate = bin_dir() / name
+    return candidate if candidate.exists() else None
+
+
+def vad_model() -> Path | None:
+    candidate = bin_dir() / "ggml-silero-v5.1.2.bin"
+    return candidate if candidate.exists() else None
+
+
+def model_path(model_name: str) -> Path | None:
+    """Official name, custom name, or a bare filename -- all resolve here."""
+    for filename in (
+        MODEL_FILES.get(model_name),
+        f"ggml-{model_name}.bin",
+        model_name,
+    ):
+        if not filename:
+            continue
+        candidate = models_dir() / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def custom_models() -> list[str]:
+    """Models converted locally, e.g. a Persian fine-tune."""
+    known = set(MODEL_FILES.values())
+    names = []
+    for path in sorted(models_dir().glob("ggml-*.bin")):
+        if path.name in known:
+            continue
+        names.append(path.stem.removeprefix("ggml-"))
+    return names
+
+
+def installed_models() -> list[str]:
+    present = {p.name for p in models_dir().glob("*.bin")}
+    official = [name for name, filename in MODEL_FILES.items() if filename in present]
+    return official + custom_models()
