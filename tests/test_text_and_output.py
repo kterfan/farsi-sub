@@ -301,3 +301,31 @@ def test_multi_word_corrections_are_applied_to_a_line():
 
     table = {"خونه دار": "خونه‌دار", "بوهران": "بحران"}
     assert correct_text("زن خونه دار با بوهران", table) == "زن خونه‌دار با بحران"
+
+
+def test_models_are_found_in_extra_folders(tmp_path=None):
+    # An installed copy should reuse a model set already on the disk instead of
+    # downloading gigabytes again.
+    import os
+    import tempfile
+
+    from farsisub.engine import locate
+
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as shared:
+        previous = os.environ.get("FARSISUB_DATA")
+        os.environ["FARSISUB_DATA"] = home
+        try:
+            (Path(shared) / "ggml-large-v3.bin").write_bytes(b"x")
+            (Path(shared) / "ggml-my-tune.bin").write_bytes(b"x")
+            assert locate.installed_models() == []
+
+            locate.add_model_dir(shared)
+            found = locate.installed_models()
+            assert "large-v3" in found
+            assert "my-tune" in found
+            assert locate.model_path("my-tune") == Path(shared) / "ggml-my-tune.bin"
+        finally:
+            if previous is None:
+                os.environ.pop("FARSISUB_DATA", None)
+            else:
+                os.environ["FARSISUB_DATA"] = previous

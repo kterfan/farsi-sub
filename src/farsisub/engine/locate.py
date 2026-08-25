@@ -28,14 +28,25 @@ MODEL_FILES = {
 
 
 def install_dir() -> Path:
-    """Directory the app runs from, whether frozen by PyInstaller or not."""
+    """Where the application lives; also where its data folder goes."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parents[3]
 
 
+def resource_dir() -> Path:
+    """Where files bundled with the app live.
+
+    A frozen build unpacks its data into `_internal`, next to the executable
+    but not beside it, so binaries and fonts have to be looked up there while
+    user data stays in the visible folder.
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    return Path(bundled) if bundled else install_dir()
+
+
 def bin_dir() -> Path:
-    return Path(os.environ.get("FARSISUB_BIN", install_dir() / "bin"))
+    return Path(os.environ.get("FARSISUB_BIN", resource_dir() / "bin"))
 
 
 def data_dir() -> Path:
@@ -88,10 +99,51 @@ def project_path(video: str | Path) -> Path:
     return projects_dir() / f"{video.stem}-{digest}.fsub"
 
 
+MODEL_DIRS_FILE = "model_dirs.txt"
+
+
 def models_dir() -> Path:
+    """Where downloads land."""
     path = data_dir() / "models"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def extra_model_dirs() -> list[Path]:
+    """Folders to look in besides the download folder.
+
+    Model files are gigabytes each; an installed copy should be able to use a
+    set that is already on the disk instead of fetching it again. One path per
+    line in data/model_dirs.txt.
+    """
+    listing = data_dir() / MODEL_DIRS_FILE
+    if not listing.exists():
+        return []
+    dirs = []
+    for line in listing.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            path = Path(line)
+            if path.is_dir():
+                dirs.append(path)
+    return dirs
+
+
+def add_model_dir(folder: str | Path) -> Path:
+    """Register another folder of models."""
+    listing = data_dir() / MODEL_DIRS_FILE
+    folder = str(Path(folder).resolve())
+    existing = []
+    if listing.exists():
+        existing = [l.strip() for l in listing.read_text(encoding="utf-8").splitlines()]
+    if folder not in existing:
+        existing.append(folder)
+    listing.write_text(chr(10).join(filter(None, existing)) + chr(10), encoding="utf-8")
+    return listing
+
+
+def model_search_dirs() -> list[Path]:
+    return [models_dir(), *extra_model_dirs()]
 
 
 def whisper_binary() -> Path | None:
@@ -107,31 +159,35 @@ def vad_model() -> Path | None:
 
 def model_path(model_name: str) -> Path | None:
     """Official name, custom name, or a bare filename -- all resolve here."""
-    for filename in (
-        MODEL_FILES.get(model_name),
-        f"ggml-{model_name}.bin",
-        model_name,
-    ):
-        if not filename:
-            continue
-        candidate = models_dir() / filename
-        if candidate.exists():
-            return candidate
+    for folder in model_search_dirs():
+        for filename in (
+            MODEL_FILES.get(model_name),
+            f"ggml-{model_name}.bin",
+            model_name,
+        ):
+            if not filename:
+                continue
+            candidate = folder / filename
+            if candidate.exists():
+                return candidate
     return None
 
 
 def custom_models() -> list[str]:
     """Models converted locally, e.g. a Persian fine-tune."""
     known = set(MODEL_FILES.values())
-    names = []
-    for path in sorted(models_dir().glob("ggml-*.bin")):
-        if path.name in known:
-            continue
-        names.append(path.stem.removeprefix("ggml-"))
+    names: list[str] = []
+    for folder in model_search_dirs():
+        for path in sorted(folder.glob("ggml-*.bin")):
+            name = path.stem.removeprefix("ggml-")
+            if path.name not in known and name not in names:
+                names.append(name)
     return names
 
 
 def installed_models() -> list[str]:
-    present = {p.name for p in models_dir().glob("*.bin")}
+    present: set[str] = set()
+    for folder in model_search_dirs():
+        present |= {p.name for p in folder.glob("*.bin")}
     official = [name for name, filename in MODEL_FILES.items() if filename in present]
     return official + custom_models()

@@ -82,7 +82,9 @@ def load_fonts() -> bool:
     """Register the bundled Persian font. Windows' default renders it badly."""
     from PySide6.QtGui import QFontDatabase
 
-    assets = Path(__file__).resolve().parents[3] / "assets" / "fonts"
+    from ..engine.locate import resource_dir
+
+    assets = resource_dir() / "assets" / "fonts"
     loaded = False
     for path in sorted(assets.glob("Vazirmatn*.ttf")):
         if QFontDatabase.addApplicationFont(str(path)) != -1:
