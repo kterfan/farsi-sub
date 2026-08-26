@@ -12,6 +12,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# The Windows console defaults to cp1252, which cannot print Persian: without
+# this the check dies on its own first line and the build carries on as if it
+# had passed.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 REQUIRED = [
     "FarsiSub.exe",
     "_internal/bin/whisper-cli.exe",
