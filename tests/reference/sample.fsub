@@ -1,0 +1,1621 @@
+{
+ "schema": 1,
+ "video_path": "sample.mp4",
+ "model_name": "large-v3",
+ "profile_name": "smart",
+ "language": "fa",
+ "duration": 79.94,
+ "words": [
+  {
+   "text": "زن",
+   "start": 0.14,
+   "end": 0.28,
+   "p": 0.868,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04181
+  },
+  {
+   "text": "همه",
+   "start": 0.5,
+   "end": 0.7,
+   "p": 0.9534,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07362
+  },
+  {
+   "text": "فن",
+   "start": 0.9,
+   "end": 0.98,
+   "p": 0.7607,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.09175
+  },
+  {
+   "text": "حریف",
+   "start": 1.12,
+   "end": 1.53,
+   "p": 0.2882,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04708
+  },
+  {
+   "text": "خونه",
+   "start": 1.54,
+   "end": 2.0,
+   "p": 0.9144,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.03296
+  },
+  {
+   "text": "وابسته",
+   "start": 2.28,
+   "end": 2.81,
+   "p": 0.5132,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.0659
+  },
+  {
+   "text": "ترین",
+   "start": 3.12,
+   "end": 3.31,
+   "p": 0.7915,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05716
+  },
+  {
+   "text": "آدم",
+   "start": 3.64,
+   "end": 3.66,
+   "p": 0.9836,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07089
+  },
+  {
+   "text": "هر",
+   "start": 4.08,
+   "end": 4.16,
+   "p": 0.9562,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0307
+  },
+  {
+   "text": "خونه",
+   "start": 4.4,
+   "end": 4.48,
+   "p": 0.9628,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00211
+  },
+  {
+   "text": "است",
+   "start": 4.78,
+   "end": 4.86,
+   "p": 0.8535,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00165
+  },
+  {
+   "text": "این",
+   "start": 4.88,
+   "end": 5.02,
+   "p": 0.9749,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03883
+  },
+  {
+   "text": "که",
+   "start": 5.04,
+   "end": 5.16,
+   "p": 0.5585,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04563
+  },
+  {
+   "text": "همه",
+   "start": 5.2,
+   "end": 5.36,
+   "p": 0.9848,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06798
+  },
+  {
+   "text": "چی",
+   "start": 5.44,
+   "end": 5.51,
+   "p": 0.9559,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01316
+  },
+  {
+   "text": "رو",
+   "start": 5.56,
+   "end": 5.59,
+   "p": 0.6782,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.09497
+  },
+  {
+   "text": "بلد",
+   "start": 5.7,
+   "end": 5.86,
+   "p": 0.9718,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07926
+  },
+  {
+   "text": "باشی",
+   "start": 6.04,
+   "end": 6.18,
+   "p": 0.9482,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04398
+  },
+  {
+   "text": "یعنی",
+   "start": 6.28,
+   "end": 6.48,
+   "p": 0.5358,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05112
+  },
+  {
+   "text": "لزوماً",
+   "start": 6.48,
+   "end": 6.86,
+   "p": 0.4869,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03465
+  },
+  {
+   "text": "اختیار",
+   "start": 6.86,
+   "end": 7.46,
+   "p": 0.8943,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03947
+  },
+  {
+   "text": "زندگی",
+   "start": 7.46,
+   "end": 7.86,
+   "p": 0.9861,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04189
+  },
+  {
+   "text": "دست",
+   "start": 7.86,
+   "end": 8.14,
+   "p": 0.8761,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03192
+  },
+  {
+   "text": "خودته؟",
+   "start": 8.14,
+   "end": 8.96,
+   "p": 0.3839,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.02182
+  },
+  {
+   "text": "نلزومن",
+   "start": 9.14,
+   "end": 9.88,
+   "p": 0.49,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.04651
+  },
+  {
+   "text": "تو",
+   "start": 10.04,
+   "end": 10.09,
+   "p": 0.9625,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07515
+  },
+  {
+   "text": "ممکنه",
+   "start": 10.16,
+   "end": 10.59,
+   "p": 0.9929,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06205
+  },
+  {
+   "text": "خرید",
+   "start": 10.6,
+   "end": 11.0,
+   "p": 0.9865,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05734
+  },
+  {
+   "text": "کنی،",
+   "start": 11.0,
+   "end": 11.45,
+   "p": 0.6838,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.039
+  },
+  {
+   "text": "بحران",
+   "start": 11.48,
+   "end": 11.87,
+   "p": 0.5868,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07198
+  },
+  {
+   "text": "رو",
+   "start": 12.0,
+   "end": 12.11,
+   "p": 0.9351,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05504
+  },
+  {
+   "text": "جمع",
+   "start": 12.16,
+   "end": 12.35,
+   "p": 0.9931,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07477
+  },
+  {
+   "text": "کنی،",
+   "start": 12.46,
+   "end": 12.69,
+   "p": 0.9615,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03953
+  },
+  {
+   "text": "حساب",
+   "start": 12.76,
+   "end": 13.08,
+   "p": 0.8994,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04443
+  },
+  {
+   "text": "کتاب",
+   "start": 13.12,
+   "end": 13.37,
+   "p": 0.9386,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04371
+  },
+  {
+   "text": "بلد",
+   "start": 13.48,
+   "end": 13.64,
+   "p": 0.9924,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07625
+  },
+  {
+   "text": "باشی،",
+   "start": 13.82,
+   "end": 14.12,
+   "p": 0.6656,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01865
+  },
+  {
+   "text": "برنامه",
+   "start": 14.16,
+   "end": 14.6,
+   "p": 0.9644,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07672
+  },
+  {
+   "text": "بقیه",
+   "start": 14.6,
+   "end": 14.93,
+   "p": 0.8738,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06063
+  },
+  {
+   "text": "رو",
+   "start": 15.02,
+   "end": 15.09,
+   "p": 0.9657,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06683
+  },
+  {
+   "text": "هماهنگ",
+   "start": 15.14,
+   "end": 15.58,
+   "p": 0.7378,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04967
+  },
+  {
+   "text": "کنی",
+   "start": 15.74,
+   "end": 16.0,
+   "p": 0.9975,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03539
+  },
+  {
+   "text": "ولی",
+   "start": 16.14,
+   "end": 16.34,
+   "p": 0.997,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05032
+  },
+  {
+   "text": "تا",
+   "start": 16.34,
+   "end": 16.6,
+   "p": 0.9961,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03735
+  },
+  {
+   "text": "نوبت",
+   "start": 16.74,
+   "end": 17.08,
+   "p": 0.9953,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05794
+  },
+  {
+   "text": "تصمیم",
+   "start": 17.2,
+   "end": 17.68,
+   "p": 0.9675,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02674
+  },
+  {
+   "text": "خودت",
+   "start": 17.78,
+   "end": 18.16,
+   "p": 0.9972,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03888
+  },
+  {
+   "text": "میرسه",
+   "start": 18.32,
+   "end": 18.76,
+   "p": 0.7934,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.02307
+  },
+  {
+   "text": "منتظر",
+   "start": 19.3,
+   "end": 19.36,
+   "p": 0.4463,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04671
+  },
+  {
+   "text": "تأیید",
+   "start": 19.92,
+   "end": 19.96,
+   "p": 0.6062,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03668
+  },
+  {
+   "text": "بقیه",
+   "start": 20.22,
+   "end": 20.36,
+   "p": 0.9801,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05977
+  },
+  {
+   "text": "باشی",
+   "start": 20.64,
+   "end": 20.99,
+   "p": 0.9982,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00812
+  },
+  {
+   "text": "و",
+   "start": 21.1,
+   "end": 21.11,
+   "p": 0.9897,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01325
+  },
+  {
+   "text": "این",
+   "start": 21.24,
+   "end": 21.45,
+   "p": 0.9973,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04324
+  },
+  {
+   "text": "قسمتشه",
+   "start": 21.52,
+   "end": 22.12,
+   "p": 0.8632,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05168
+  },
+  {
+   "text": "که",
+   "start": 22.32,
+   "end": 22.34,
+   "p": 0.994,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00465
+  },
+  {
+   "text": "معمولاً",
+   "start": 22.74,
+   "end": 22.98,
+   "p": 0.9709,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06369
+  },
+  {
+   "text": "به",
+   "start": 23.36,
+   "end": 23.44,
+   "p": 0.6301,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0383
+  },
+  {
+   "text": "زن",
+   "start": 23.58,
+   "end": 23.66,
+   "p": 0.9979,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0687
+  },
+  {
+   "text": "خونه‌دار",
+   "start": 23.9,
+   "end": 24.15,
+   "p": 0.8297,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02817
+  },
+  {
+   "text": "بر",
+   "start": 24.48,
+   "end": 24.56,
+   "p": 0.9981,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05288
+  },
+  {
+   "text": "میخوره",
+   "start": 24.82,
+   "end": 25.24,
+   "p": 0.5133,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02068
+  },
+  {
+   "text": "شاید",
+   "start": 25.36,
+   "end": 25.56,
+   "p": 0.9672,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05049
+  },
+  {
+   "text": "تو",
+   "start": 25.56,
+   "end": 25.66,
+   "p": 0.9872,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05942
+  },
+  {
+   "text": "مستقل",
+   "start": 25.66,
+   "end": 26.35,
+   "p": 0.9765,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04754
+  },
+  {
+   "text": "نیستی،",
+   "start": 26.42,
+   "end": 26.76,
+   "p": 0.8465,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01486
+  },
+  {
+   "text": "شاید",
+   "start": 26.76,
+   "end": 27.1,
+   "p": 0.987,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02696
+  },
+  {
+   "text": "خیلی",
+   "start": 27.1,
+   "end": 27.74,
+   "p": 0.9879,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03884
+  },
+  {
+   "text": "مسئولیت",
+   "start": 27.74,
+   "end": 28.46,
+   "p": 0.9725,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02681
+  },
+  {
+   "text": "پذیری",
+   "start": 28.5,
+   "end": 29.08,
+   "p": 0.8394,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03136
+  },
+  {
+   "text": "گوش",
+   "start": 29.24,
+   "end": 29.48,
+   "p": 0.9464,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05247
+  },
+  {
+   "text": "کن،",
+   "start": 29.5,
+   "end": 29.84,
+   "p": 0.5581,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07099
+  },
+  {
+   "text": "یه",
+   "start": 30.18,
+   "end": 30.26,
+   "p": 0.996,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06178
+  },
+  {
+   "text": "نظریه",
+   "start": 30.38,
+   "end": 30.68,
+   "p": 0.9864,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06572
+  },
+  {
+   "text": "هست",
+   "start": 30.94,
+   "end": 31.06,
+   "p": 0.9991,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05674
+  },
+  {
+   "text": "به",
+   "start": 31.22,
+   "end": 31.3,
+   "p": 0.8723,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04812
+  },
+  {
+   "text": "نام",
+   "start": 31.36,
+   "end": 31.68,
+   "p": 0.9955,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0568
+  },
+  {
+   "text": "نظریه",
+   "start": 31.7,
+   "end": 32.29,
+   "p": 0.9895,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.04729
+  },
+  {
+   "text": "خودتعینگری",
+   "start": 32.54,
+   "end": 33.76,
+   "p": 0.8359,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.03075
+  },
+  {
+   "text": "میگه",
+   "start": 33.94,
+   "end": 34.21,
+   "p": 0.9941,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04139
+  },
+  {
+   "text": "استقلال",
+   "start": 34.38,
+   "end": 35.01,
+   "p": 0.9828,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04463
+  },
+  {
+   "text": "یعنی",
+   "start": 35.22,
+   "end": 35.45,
+   "p": 0.9156,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03682
+  },
+  {
+   "text": "بتونی",
+   "start": 35.6,
+   "end": 35.94,
+   "p": 0.9938,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01762
+  },
+  {
+   "text": "با",
+   "start": 35.94,
+   "end": 36.2,
+   "p": 0.9993,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03498
+  },
+  {
+   "text": "اراده",
+   "start": 36.2,
+   "end": 36.8,
+   "p": 0.9991,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04422
+  },
+  {
+   "text": "خودت",
+   "start": 36.88,
+   "end": 37.23,
+   "p": 0.9877,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02742
+  },
+  {
+   "text": "انتخاب",
+   "start": 37.46,
+   "end": 37.93,
+   "p": 0.9993,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02694
+  },
+  {
+   "text": "کنی",
+   "start": 38.14,
+   "end": 38.51,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01588
+  },
+  {
+   "text": "نه",
+   "start": 38.58,
+   "end": 38.68,
+   "p": 0.9986,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01192
+  },
+  {
+   "text": "این",
+   "start": 38.8,
+   "end": 38.92,
+   "p": 0.9997,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03143
+  },
+  {
+   "text": "که",
+   "start": 38.92,
+   "end": 38.98,
+   "p": 0.8497,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07056
+  },
+  {
+   "text": "صرفاً",
+   "start": 38.98,
+   "end": 39.4,
+   "p": 0.7834,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02821
+  },
+  {
+   "text": "کارای",
+   "start": 39.42,
+   "end": 39.79,
+   "p": 0.6842,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04573
+  },
+  {
+   "text": "بیشتری",
+   "start": 39.84,
+   "end": 40.28,
+   "p": 0.9982,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01558
+  },
+  {
+   "text": "انجام",
+   "start": 40.36,
+   "end": 40.52,
+   "p": 0.9983,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01503
+  },
+  {
+   "text": "بدی",
+   "start": 40.8,
+   "end": 41.02,
+   "p": 0.9986,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00901
+  },
+  {
+   "text": "خودت",
+   "start": 41.2,
+   "end": 41.55,
+   "p": 0.9978,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02163
+  },
+  {
+   "text": "رو",
+   "start": 41.8,
+   "end": 41.81,
+   "p": 0.9959,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00603
+  },
+  {
+   "text": "با",
+   "start": 42.24,
+   "end": 42.32,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00077
+  },
+  {
+   "text": "این",
+   "start": 42.54,
+   "end": 42.55,
+   "p": 1.0,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06459
+  },
+  {
+   "text": "ستا",
+   "start": 42.76,
+   "end": 42.98,
+   "p": 0.8641,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04089
+  },
+  {
+   "text": "سوال",
+   "start": 43.2,
+   "end": 43.54,
+   "p": 0.8769,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06113
+  },
+  {
+   "text": "بسنج",
+   "start": 43.58,
+   "end": 44.05,
+   "p": 0.8645,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02392
+  },
+  {
+   "text": "برای",
+   "start": 44.12,
+   "end": 44.42,
+   "p": 0.9985,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07976
+  },
+  {
+   "text": "وقت",
+   "start": 44.42,
+   "end": 44.86,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05378
+  },
+  {
+   "text": "تصمیم",
+   "start": 44.86,
+   "end": 45.42,
+   "p": 0.9838,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02963
+  },
+  {
+   "text": "میگیری،",
+   "start": 45.62,
+   "end": 46.26,
+   "p": 0.2513,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0311
+  },
+  {
+   "text": "میتونی",
+   "start": 46.46,
+   "end": 47.1,
+   "p": 0.9989,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04481
+  },
+  {
+   "text": "بدون",
+   "start": 47.24,
+   "end": 47.54,
+   "p": 0.9997,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06525
+  },
+  {
+   "text": "عذاب",
+   "start": 47.66,
+   "end": 48.22,
+   "p": 0.9108,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.05522
+  },
+  {
+   "text": "وجدان",
+   "start": 48.24,
+   "end": 48.78,
+   "p": 0.707,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03405
+  },
+  {
+   "text": "نبگی؟",
+   "start": 48.78,
+   "end": 49.7,
+   "p": 0.953,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.02888
+  },
+  {
+   "text": "توی",
+   "start": 49.72,
+   "end": 49.92,
+   "p": 0.9991,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05875
+  },
+  {
+   "text": "تصمیمای",
+   "start": 49.92,
+   "end": 50.66,
+   "p": 0.4726,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04654
+  },
+  {
+   "text": "مهم",
+   "start": 50.66,
+   "end": 51.39,
+   "p": 0.9985,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.03766
+  },
+  {
+   "text": "حق",
+   "start": 51.42,
+   "end": 51.65,
+   "p": 0.8374,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03629
+  },
+  {
+   "text": "رای",
+   "start": 51.82,
+   "end": 52.04,
+   "p": 0.5383,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05773
+  },
+  {
+   "text": "واقعی",
+   "start": 52.32,
+   "end": 52.69,
+   "p": 0.9991,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05653
+  },
+  {
+   "text": "داری؟",
+   "start": 52.78,
+   "end": 53.42,
+   "p": 0.9992,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0246
+  },
+  {
+   "text": "اگه",
+   "start": 53.42,
+   "end": 53.72,
+   "p": 0.9056,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04845
+  },
+  {
+   "text": "جواب",
+   "start": 53.72,
+   "end": 54.12,
+   "p": 0.9975,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07224
+  },
+  {
+   "text": "بیشترشون",
+   "start": 54.12,
+   "end": 55.06,
+   "p": 0.9879,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03596
+  },
+  {
+   "text": "نبود،",
+   "start": 55.06,
+   "end": 55.74,
+   "p": 0.9155,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.04402
+  },
+  {
+   "text": "مشکل",
+   "start": 55.98,
+   "end": 56.14,
+   "p": 0.9804,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02843
+  },
+  {
+   "text": "تو",
+   "start": 56.34,
+   "end": 56.42,
+   "p": 0.9411,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05712
+  },
+  {
+   "text": "بیارزگی",
+   "start": 56.52,
+   "end": 57.04,
+   "p": 0.6367,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07082
+  },
+  {
+   "text": "نیست",
+   "start": 57.26,
+   "end": 57.48,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01268
+  },
+  {
+   "text": "مهارت",
+   "start": 57.56,
+   "end": 57.99,
+   "p": 0.7419,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.08388
+  },
+  {
+   "text": "داری،",
+   "start": 58.1,
+   "end": 58.5,
+   "p": 0.907,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03991
+  },
+  {
+   "text": "اما",
+   "start": 58.58,
+   "end": 58.81,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06158
+  },
+  {
+   "text": "هنوز",
+   "start": 58.86,
+   "end": 59.21,
+   "p": 0.9982,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03234
+  },
+  {
+   "text": "اختیارت",
+   "start": 59.22,
+   "end": 59.93,
+   "p": 0.9749,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03873
+  },
+  {
+   "text": "همقدر",
+   "start": 60.06,
+   "end": 60.44,
+   "p": 0.7747,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03744
+  },
+  {
+   "text": "مهارتت",
+   "start": 60.68,
+   "end": 61.05,
+   "p": 0.9944,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05327
+  },
+  {
+   "text": "نشده",
+   "start": 61.3,
+   "end": 61.72,
+   "p": 0.9977,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01274
+  },
+  {
+   "text": "امروز",
+   "start": 61.76,
+   "end": 62.12,
+   "p": 0.9995,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.07759
+  },
+  {
+   "text": "یه",
+   "start": 62.16,
+   "end": 62.25,
+   "p": 0.7153,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03781
+  },
+  {
+   "text": "کاری",
+   "start": 62.26,
+   "end": 62.56,
+   "p": 0.9822,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05821
+  },
+  {
+   "text": "کن،",
+   "start": 62.56,
+   "end": 62.92,
+   "p": 0.8597,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.019
+  },
+  {
+   "text": "فقط",
+   "start": 62.92,
+   "end": 63.25,
+   "p": 0.9993,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.06193
+  },
+  {
+   "text": "یه",
+   "start": 63.44,
+   "end": 63.49,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0621
+  },
+  {
+   "text": "تصمیم",
+   "start": 63.54,
+   "end": 64.04,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04184
+  },
+  {
+   "text": "کچیکو",
+   "start": 64.06,
+   "end": 64.7,
+   "p": 0.6945,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02598
+  },
+  {
+   "text": "بدون",
+   "start": 64.94,
+   "end": 65.12,
+   "p": 0.9987,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03044
+  },
+  {
+   "text": "اجازه",
+   "start": 65.32,
+   "end": 65.63,
+   "p": 0.9883,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0442
+  },
+  {
+   "text": "گرفتن،",
+   "start": 65.88,
+   "end": 66.23,
+   "p": 0.5881,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02919
+  },
+  {
+   "text": "فقط",
+   "start": 66.46,
+   "end": 66.55,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02836
+  },
+  {
+   "text": "با",
+   "start": 66.86,
+   "end": 66.94,
+   "p": 0.9948,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02812
+  },
+  {
+   "text": "اطلاع",
+   "start": 67.0,
+   "end": 67.26,
+   "p": 0.9955,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02939
+  },
+  {
+   "text": "دادن",
+   "start": 67.44,
+   "end": 67.67,
+   "p": 0.9995,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04938
+  },
+  {
+   "text": "انجامش",
+   "start": 67.96,
+   "end": 68.29,
+   "p": 0.9953,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03085
+  },
+  {
+   "text": "بده",
+   "start": 68.56,
+   "end": 68.78,
+   "p": 0.9997,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01321
+  },
+  {
+   "text": "این",
+   "start": 68.8,
+   "end": 69.02,
+   "p": 0.9999,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02793
+  },
+  {
+   "text": "دقیقاً",
+   "start": 69.02,
+   "end": 69.57,
+   "p": 0.9968,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03874
+  },
+  {
+   "text": "فرق",
+   "start": 69.58,
+   "end": 69.99,
+   "p": 0.9452,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03614
+  },
+  {
+   "text": "استقلال",
+   "start": 70.08,
+   "end": 70.76,
+   "p": 0.8988,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03252
+  },
+  {
+   "text": "با",
+   "start": 70.9,
+   "end": 70.99,
+   "p": 0.996,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04174
+  },
+  {
+   "text": "لجبازیه",
+   "start": 71.04,
+   "end": 71.81,
+   "p": 0.9603,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02421
+  },
+  {
+   "text": "این",
+   "start": 71.86,
+   "end": 72.1,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.05091
+  },
+  {
+   "text": "پستم",
+   "start": 72.1,
+   "end": 72.58,
+   "p": 0.7102,
+   "keyword": true,
+   "edited": false,
+   "energy": 0.05354
+  },
+  {
+   "text": "بفرست",
+   "start": 72.78,
+   "end": 73.09,
+   "p": 0.9747,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03589
+  },
+  {
+   "text": "برای",
+   "start": 73.26,
+   "end": 73.52,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.06027
+  },
+  {
+   "text": "اون",
+   "start": 73.56,
+   "end": 73.78,
+   "p": 0.9991,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02926
+  },
+  {
+   "text": "زنی",
+   "start": 73.78,
+   "end": 74.15,
+   "p": 0.9933,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03952
+  },
+  {
+   "text": "که",
+   "start": 74.16,
+   "end": 74.47,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02484
+  },
+  {
+   "text": "همه",
+   "start": 74.58,
+   "end": 74.79,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04811
+  },
+  {
+   "text": "به",
+   "start": 74.94,
+   "end": 75.0,
+   "p": 0.9996,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0928
+  },
+  {
+   "text": "توانمند",
+   "start": 75.12,
+   "end": 75.73,
+   "p": 0.5748,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04279
+  },
+  {
+   "text": "بودنش",
+   "start": 75.8,
+   "end": 76.25,
+   "p": 0.9963,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.03266
+  },
+  {
+   "text": "تکیه",
+   "start": 76.34,
+   "end": 76.66,
+   "p": 0.9963,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01739
+  },
+  {
+   "text": "میکنن",
+   "start": 76.76,
+   "end": 77.28,
+   "p": 0.9217,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.02987
+  },
+  {
+   "text": "ولی",
+   "start": 77.44,
+   "end": 77.57,
+   "p": 0.7382,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04169
+  },
+  {
+   "text": "هیچ",
+   "start": 77.64,
+   "end": 77.81,
+   "p": 0.9068,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01741
+  },
+  {
+   "text": "کس",
+   "start": 77.86,
+   "end": 77.97,
+   "p": 0.9773,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04771
+  },
+  {
+   "text": "ازش",
+   "start": 78.02,
+   "end": 78.21,
+   "p": 0.9953,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04398
+  },
+  {
+   "text": "نمیپرسه،",
+   "start": 78.34,
+   "end": 79.0,
+   "p": 0.8007,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.01896
+  },
+  {
+   "text": "تو",
+   "start": 79.2,
+   "end": 79.28,
+   "p": 0.9998,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.04527
+  },
+  {
+   "text": "چی",
+   "start": 79.4,
+   "end": 79.48,
+   "p": 0.9996,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.0121
+  },
+  {
+   "text": "میخوای؟",
+   "start": 79.54,
+   "end": 79.94,
+   "p": 0.6554,
+   "keyword": false,
+   "edited": false,
+   "energy": 0.00875
+  }
+ ]
+}

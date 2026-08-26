@@ -116,6 +116,65 @@ def _fill_with_second_model(
     return merged
 
 
+MAX_RECOVERY_RANGES = 6  # a whole file of holes means something else is wrong
+RECOVERY_PAD = 0.4  # seconds of context around a hole
+
+
+def _recover_gaps(
+    words: list[Word],
+    envelope,
+    options: WhisperOptions,
+    wav: Path,
+    tmp: Path,
+    *,
+    on_log=None,
+) -> list[Word]:
+    """Transcribe again, but only where the audio has speech and the text does not.
+
+    Whisper sometimes skips a stretch outright and the user sees a subtitle
+    that simply stops for a few seconds. Re-running the whole file costs
+    minutes and usually reproduces the same skip; re-running the hole alone
+    costs seconds and gives the decoder a fresh start with different context.
+    """
+    holes = audio_module.uncovered_speech(words, envelope)
+    if not holes:
+        return words
+    if len(holes) > MAX_RECOVERY_RANGES:
+        if on_log:
+            on_log(f"{len(holes)} ناحیه بدون متن — بیش از حد، بازیابی انجام نشد")
+        return words
+
+    recovered: list[Word] = []
+    for index, (start, end) in enumerate(holes):
+        begin = max(0.0, start - RECOVERY_PAD)
+        attempt = WhisperOptions(
+            **{
+                **options.__dict__,
+                "offset_ms": int(begin * 1000),
+                "duration_ms": int((end - begin + RECOVERY_PAD) * 1000),
+            }
+        )
+        try:
+            found = run(attempt, wav, tmp / f"gap{index}", on_log=None)
+        except Exception as error:  # a failed retry must not lose the transcript
+            if on_log:
+                on_log(f"بازیابی بازه {start:.1f}s انجام نشد: {error}")
+            continue
+        recovered.extend(
+            w for w in found if start - RECOVERY_PAD <= w.start <= end + RECOVERY_PAD
+        )
+
+    if not recovered:
+        if on_log:
+            on_log(f"{len(holes)} ناحیه بدون متن بود؛ تلاش دوباره چیزی نیافت")
+        return words
+
+    merged, report = merge_streams(words, recovered, min_hole=0.6)
+    if on_log:
+        on_log(f"بازیابی: {len(holes)} ناحیه بدون متن، {report.words_added} کلمه برگشت")
+    return merged
+
+
 def _build_prompt(base: str) -> str:
     """Append the user's own vocabulary so the model expects those words."""
     terms = corrections_module.prompt_terms()
@@ -205,6 +264,11 @@ def transcribe(
             envelope = None
             if on_log:
                 on_log(f"تحلیل بلندی صدا انجام نشد: {error}")
+
+        # Whatever the cause -- a skipped window, a failed pass -- speech with
+        # no words is a hole the user will see. Fill it here.
+        if envelope is not None and words:
+            words = _recover_gaps(words, envelope, options, wav, Path(tmp), on_log=on_log)
 
     table = corrections_module.build_table(config.text.auto_corrections)
     cleaned: list[Word] = []

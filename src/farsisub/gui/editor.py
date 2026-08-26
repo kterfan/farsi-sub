@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html import escape
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..config import AppConfig
 from ..models import Cue, Project, Word
@@ -199,6 +201,18 @@ class EditorDialog(QDialog):
         self.marked_row = -1
         self.last_edited_row = -1
         self.active_editor = None
+        # Snapshots for undo. Deleting the wrong line used to be unrecoverable
+        # short of closing the dialog without saving.
+        self.history: list[list[EditableCue]] = []
+        self.redo_stack: list[list[EditableCue]] = []
+
+        # Checking a line used to mean opening the video in another player.
+        self.player = QMediaPlayer(self)
+        self.audio_out = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio_out)
+        self.player.setSource(QUrl.fromLocalFile(str(project.video_path)))
+        self.stop_at = 0.0
+        self.player.positionChanged.connect(self._stop_at_cue_end)
 
         cues = build_cues(project.words, config.profile, config.text)
         self.cues = cues_to_editable(project, cues)
@@ -240,6 +254,17 @@ class EditorDialog(QDialog):
         self.merge_button.clicked.connect(self.merge_selected)
         self.delete_button = QPushButton("حذف خط")
         self.delete_button.clicked.connect(self.delete_selected)
+        self.play_button = QPushButton("پخش این خط (Space)")
+        self.play_button.setToolTip("صدای همین خط را از ویدیو پخش می‌کند")
+        self.play_button.clicked.connect(self.play_selected)
+
+        self.undo_button = QPushButton("واگرد (Ctrl+Z)")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.undo)
+        self.redo_button = QPushButton("از نو")
+        self.redo_button.setEnabled(False)
+        self.redo_button.clicked.connect(self.redo)
+
         self.zwnj_button = QPushButton("نیم‌فاصله")
         self.zwnj_button.setToolTip(
             "نیم‌فاصله را داخل کلمه می‌گذارد: می‌رود، خونه‌دار.\n"
@@ -257,6 +282,9 @@ class EditorDialog(QDialog):
         self.export_button.setObjectName("Primary")
         self.export_button.clicked.connect(self.export)
 
+        buttons.addWidget(self.play_button)
+        buttons.addWidget(self.undo_button)
+        buttons.addWidget(self.redo_button)
         buttons.addWidget(self.split_button)
         buttons.addWidget(self.merge_button)
         buttons.addWidget(self.delete_button)
@@ -271,6 +299,9 @@ class EditorDialog(QDialog):
             ("Ctrl+M", self.merge_selected),
             ("Ctrl+S", self.export),
             ("F3", self.jump_to_suspect),
+            ("Space", self.play_selected),
+            ("Ctrl+Z", self.undo),
+            ("Ctrl+Y", self.redo),
         ):
             action = QAction(self)
             action.setShortcut(QKeySequence(shortcut))
@@ -333,14 +364,71 @@ class EditorDialog(QDialog):
         if item.column() != COL_TEXT:
             return
         cue = self.cues[item.row()]
+        if cue.text != item.text().strip():
+            self._snapshot()
         cue.text = item.text().strip()
         cue.edited = True
         self.last_edited_row = item.row()
         self._reload(keep_row=item.row())
 
+    # -------------------------------------------------------------- playback
+
+    def play_selected(self) -> None:
+        """Play the audio of the current line and stop where it ends."""
+        row = self._current_row()
+        if row >= len(self.cues):
+            return
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.player.pause()
+            return
+        cue = self.cues[row]
+        self.stop_at = cue.end + 0.15
+        self.player.setPosition(int(max(0.0, cue.start - 0.1) * 1000))
+        self.player.play()
+
+    def _stop_at_cue_end(self, position_ms: int) -> None:
+        if self.stop_at and position_ms >= self.stop_at * 1000:
+            self.player.pause()
+            self.stop_at = 0.0
+
+    # --------------------------------------------------------------- history
+
+    def _snapshot(self) -> None:
+        from copy import deepcopy
+
+        self.history.append(deepcopy(self.cues))
+        del self.history[:-50]  # a long session should not grow without bound
+        self.redo_stack.clear()
+        self._update_history_buttons()
+
+    def undo(self) -> None:
+        from copy import deepcopy
+
+        if not self.history:
+            return
+        self.redo_stack.append(deepcopy(self.cues))
+        self.cues = self.history.pop()
+        self._reload()
+        self._update_history_buttons()
+
+    def redo(self) -> None:
+        from copy import deepcopy
+
+        if not self.redo_stack:
+            return
+        self.history.append(deepcopy(self.cues))
+        self.cues = self.redo_stack.pop()
+        self._reload()
+        self._update_history_buttons()
+
+    def _update_history_buttons(self) -> None:
+        self.undo_button.setEnabled(bool(self.history))
+        self.redo_button.setEnabled(bool(self.redo_stack))
+
     # ------------------------------------------------------------ operations
 
     def split_selected(self) -> None:
+        self._snapshot()
         """Cut one line into two, each keeping the timing of its own words."""
         row = self._current_row()
         if row >= len(self.cues):
@@ -359,6 +447,7 @@ class EditorDialog(QDialog):
         self._reload(keep_row=row)
 
     def merge_selected(self) -> None:
+        self._snapshot()
         """Join this line with the next; the times simply span both."""
         row = self._current_row()
         if row + 1 >= len(self.cues):
@@ -372,6 +461,7 @@ class EditorDialog(QDialog):
         self._reload(keep_row=row)
 
     def delete_selected(self) -> None:
+        self._snapshot()
         row = self._current_row()
         if row < len(self.cues):
             del self.cues[row]
@@ -475,6 +565,7 @@ class EditorDialog(QDialog):
         for heard_word, correct_word in pairs:
             path = add_correction(heard_word, correct_word)
 
+        self._snapshot()
         applied = self._apply_to_all(dict(pairs))
         extra = f"\nهمین حالا روی {applied} خط این زیرنویس اعمال شد." if applied else ""
         QMessageBox.information(

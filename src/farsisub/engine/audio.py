@@ -169,6 +169,59 @@ def drop_silent_words(
     ]
 
 
+def speech_regions(
+    envelope, bin_ms: int = BIN_MS, *, min_length: float = 0.4
+) -> list[tuple[float, float]]:
+    """Stretches where someone is audibly talking.
+
+    Used to check the finished transcript against the audio: anything the
+    model left silent here is a hole worth a second look.
+    """
+    import numpy as np
+
+    if len(envelope) == 0:
+        return []
+    loud = float(np.percentile(envelope, 90))
+    if loud <= 0:
+        return []
+    speaking = envelope > loud * 0.08
+
+    regions: list[tuple[float, float]] = []
+    start: int | None = None
+    for index, on in enumerate(speaking):
+        if on and start is None:
+            start = index
+        elif not on and start is not None:
+            if (index - start) * bin_ms / 1000 >= min_length:
+                regions.append((start * bin_ms / 1000, index * bin_ms / 1000))
+            start = None
+    if start is not None:
+        regions.append((start * bin_ms / 1000, len(speaking) * bin_ms / 1000))
+    return regions
+
+
+def uncovered_speech(
+    words: Sequence[Word],
+    envelope,
+    *,
+    bin_ms: int = BIN_MS,
+    min_gap: float = 1.2,
+    covered_fraction: float = 0.3,
+) -> list[tuple[float, float]]:
+    """Speech regions the transcript barely touches."""
+    spans = [(w.start, w.end) for w in words]
+
+    def covered(start: float, end: float) -> float:
+        return sum(min(end, e) - max(start, s) for s, e in spans if e > start and s < end)
+
+    holes = []
+    for start, end in speech_regions(envelope, bin_ms):
+        length = end - start
+        if length >= min_gap and covered(start, end) < length * covered_fraction:
+            holes.append((start, end))
+    return holes
+
+
 def waveform_points(envelope, width: int = 1200) -> list[float]:
     """Downsample the envelope to one value per pixel for the editor."""
     import numpy as np
