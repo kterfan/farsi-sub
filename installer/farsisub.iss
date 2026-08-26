@@ -7,7 +7,7 @@
 ; keep its models and settings beside itself.
 
 #define AppName "FarsiSub"
-#define AppVersion "1.1"
+#define AppVersion "1.1.2"
 #define AppPublisher "Erfan"
 #define AppExe "FarsiSub.exe"
 
@@ -41,8 +41,10 @@ Name: "desktopicon"; Description: "ساخت میان‌بر روی دسکتاپ"
 
 [Files]
 ; data\ holds models, logs and the glossary: it belongs to whoever runs the
-; program, never to the installer.
-Source: "..\dist\FarsiSub\*"; DestDir: "{app}"; Excludes: "data\*,data"; Flags: ignoreversion recursesubdirs createallsubdirs
+; program, never to the installer. The leading backslash anchors the pattern
+; to the top level -- without it Inno also dropped _internal\hazm\data, and
+; the app died on its first Persian sentence.
+Source: "..\dist\FarsiSub\*"; DestDir: "{app}"; Excludes: "\data\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

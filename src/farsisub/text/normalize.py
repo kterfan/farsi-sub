@@ -71,7 +71,13 @@ _GLUE_EXCEPTIONS = {"بهتر", "بهترین", "مهتر", "کهتر", "بهد�
 
 @lru_cache(maxsize=1)
 def _hazm_normalizer():
-    """Return a hazm Normalizer, or None when hazm is not installed."""
+    """Return a hazm Normalizer, or None when it cannot be used.
+
+    Also None when hazm is installed but its word lists are missing, which is
+    what a packaging mistake looks like: the import succeeds and the failure
+    only appears later, on the first Persian sentence. The regex fallback is
+    weaker but keeps the app working instead of raising mid-transcription.
+    """
     try:
         from hazm import Normalizer  # type: ignore
     except Exception:
@@ -91,7 +97,12 @@ def _hazm_normalizer():
         )
     except TypeError:
         # Older/newer hazm releases moved these keyword names around.
-        return Normalizer()
+        try:
+            return Normalizer()
+        except Exception:
+            return None
+    except FileNotFoundError:
+        return None
 
 
 def to_persian_digits(text: str) -> str:

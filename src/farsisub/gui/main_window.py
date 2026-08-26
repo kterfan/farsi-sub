@@ -496,7 +496,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "پردازش انجام نشد", message)
 
     def _job_finished(self) -> None:
-        self.job = None
+        # `finished` fires as the thread is winding down, not once it is gone.
+        # Dropping the reference here let the next queue item replace the Job
+        # while the old QThread was still alive: "QThread: Destroyed while
+        # thread is still running", which takes the process with it.
+        job, self.job = self.job, None
+        if job is not None:
+            job.thread.wait(10_000)
         self._update_buttons()
         self.start_queue()  # move on to the next file in the queue
 

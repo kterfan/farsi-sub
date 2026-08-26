@@ -11,6 +11,7 @@ Editing the text never touches the timings at all.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from html import escape
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QShortcut
@@ -78,6 +79,22 @@ class EditableCue:
     def worst_probability(self) -> float:
         return min((w.probability for w in self.words), default=1.0)
 
+    def shaky_words(self, threshold: float) -> dict[str, float]:
+        """Bare word -> probability, for the words the model doubted.
+
+        Marking the whole line instead flagged 69% of lines on a real clip
+        while only 9% of words were actually weak: the eye then has nowhere to
+        go. The word carries the warning now.
+        """
+        out: dict[str, float] = {}
+        for word in self.words:
+            if word.probability >= threshold:
+                continue
+            bare = word.text.strip("،؛:.!؟…")
+            if bare and word.probability < out.get(bare, 1.0):
+                out[bare] = word.probability
+        return out
+
 
 def cues_to_editable(project: Project, cues: list[Cue]) -> list[EditableCue]:
     out: list[EditableCue] = []
@@ -101,6 +118,51 @@ class MarkingDelegate(QStyledItemDelegate):
     def __init__(self, owner: "EditorDialog") -> None:
         super().__init__(owner)
         self.owner = owner
+
+    def paint(self, painter, option, index):  # noqa: N802 - Qt naming
+        """Draw the line with only its doubtful words coloured."""
+        row = index.row()
+        if row >= len(self.owner.cues):
+            super().paint(painter, option, index)
+            return
+
+        cue = self.owner.cues[row]
+        shaky = cue.shaky_words(self.owner.config.low_confidence)
+        if not shaky:
+            super().paint(painter, option, index)
+            return
+
+        from PySide6.QtGui import QTextDocument
+        from PySide6.QtWidgets import QStyle
+
+        palette = self.owner.palette_tokens
+        very_low = self.owner.config.very_low_confidence
+
+        parts = []
+        for token in index.data() .split():
+            bare = token.strip("،؛:.!؟…")
+            probability = shaky.get(bare)
+            if probability is None:
+                parts.append(escape(token))
+                continue
+            colour = palette.danger if probability < very_low else palette.warn
+            parts.append(
+                f'<span style="color:{colour};font-weight:600">{escape(token)}</span>'
+            )
+
+        document = QTextDocument()
+        document.setDefaultFont(option.font)
+        document.setHtml(
+            '<div style="color:%s" dir="rtl">%s</div>' % (palette.text, " ".join(parts))
+        )
+
+        painter.save()
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        painter.translate(option.rect.left() + 4, option.rect.top() + 4)
+        document.setTextWidth(option.rect.width() - 8)
+        document.drawContents(painter)
+        painter.restore()
 
     def createEditor(self, parent, option, index):  # noqa: N802 - Qt naming
         editor = QLineEdit(parent)
@@ -235,15 +297,14 @@ class EditorDialog(QDialog):
                     item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row, column, item)
 
-            # Colour carries meaning, so it is always paired with a tooltip.
-            worst = cue.worst_probability
-            text_item = self.table.item(row, COL_TEXT)
-            if worst < 0.4:
-                text_item.setForeground(QBrush(QColor(self.palette_tokens.danger)))
-                text_item.setToolTip("مدل به بعضی کلمه‌های این خط اصلاً مطمئن نیست")
-            elif worst < 0.6:
-                text_item.setForeground(QBrush(QColor(self.palette_tokens.warn)))
-                text_item.setToolTip("مدل به بعضی کلمه‌های این خط مطمئن نیست")
+            # The doubtful words are coloured by the delegate; the tooltip
+            # names them so the reason is never just a colour.
+            shaky = cue.shaky_words(self.config.low_confidence)
+            if shaky:
+                listing = "، ".join(sorted(shaky))
+                self.table.item(row, COL_TEXT).setToolTip(
+                    "مدل به این کلمه‌ها مطمئن نیست: " + listing
+                )
 
             cps_item = self.table.item(row, COL_CPS)
             if cue.cps > self.config.profile.max_cps:
@@ -251,9 +312,13 @@ class EditorDialog(QDialog):
                 cps_item.setToolTip("سریع‌تر از چیزی است که خوانده شود")
         self.table.blockSignals(False)
 
-        suspects = sum(1 for c in self.cues if c.worst_probability < 0.6)
+        threshold = self.config.low_confidence
+        total_words = sum(len(c.words) for c in self.cues)
+        shaky = sum(
+            1 for c in self.cues for w in c.words if w.probability < threshold
+        )
         self.summary.setText(
-            f"{len(self.cues)} خط | {suspects} خط مشکوک | "
+            f"{len(self.cues)} خط | {shaky} کلمه مشکوک از {total_words} | "
             f"ویرایش متن زمان‌ها را تغییر نمی‌دهد"
         )
         if keep_row is not None and self.table.rowCount():
@@ -317,7 +382,7 @@ class EditorDialog(QDialog):
         start = self._current_row() + 1
         order = list(range(start, len(self.cues))) + list(range(0, start))
         for row in order:
-            if self.cues[row].worst_probability < 0.6:
+            if self.cues[row].shaky_words(self.config.low_confidence):
                 self.table.setCurrentCell(row, COL_TEXT)
                 return
         QMessageBox.information(self, "بررسی", "خط مشکوکی نمانده")
