@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from html import escape
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QShortcut
@@ -32,8 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtMultimediaWidgets import QVideoWidget
+import logging
+import os
 
 from ..config import AppConfig
 from ..models import Cue, Project, Word
@@ -43,6 +44,18 @@ from ..text.corrections import add_correction, correct_text, diff_pairs
 from . import theme
 
 COL_START, COL_END, COL_DURATION, COL_CPS, COL_TEXT = range(5)
+
+log = logging.getLogger(__name__)
+
+
+def video_enabled() -> bool:
+    """Playback can be switched off when a codec takes the process down.
+
+    Qt hands decoding to a native backend, and a bad file there kills the
+    whole app without raising anything Python can catch. The editor is the
+    important part; the picture is a convenience.
+    """
+    return os.environ.get("FARSISUB_NO_VIDEO", "") != "1"
 
 
 def timecode(seconds: float) -> str:
@@ -209,20 +222,49 @@ class EditorDialog(QDialog):
         self.redo_stack: list[list[EditableCue]] = []
 
         # Checking a line used to mean opening the video in another player.
-        self.player = QMediaPlayer(self)
-        self.audio_out = QAudioOutput(self)
-        self.player.setAudioOutput(self.audio_out)
-        self.player.setSource(QUrl.fromLocalFile(str(project.video_path)))
+        self.player = None
+        self.video = None
         self.stop_at = 0.0
-        self.player.positionChanged.connect(self._stop_at_cue_end)
-        # Follow the video while editing: whatever line is selected, the
-        # picture sits on it.
         self.follow_video = True
+        self._setup_player(Path(project.video_path))
 
         cues = build_cues(project.words, config.profile, config.text)
         self.cues = cues_to_editable(project, cues)
         self._build()
         self._reload()
+
+    def _setup_player(self, video: Path) -> None:
+        """Build the player, or carry on without one."""
+        if not video_enabled():
+            log.info("پخش ویدیو با تنظیم محیطی خاموش است")
+            return
+        if not video.exists():
+            log.info("فایل ویدیو کنار پروژه نیست: %s", video)
+            return
+
+        try:
+            from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+            from PySide6.QtMultimediaWidgets import QVideoWidget
+
+            log.info("آماده‌سازی پخش برای %s", video.name)
+            self.player = QMediaPlayer(self)
+            self.audio_out = QAudioOutput(self)
+            self.player.setAudioOutput(self.audio_out)
+            self.video = QVideoWidget()
+            self.video.setMinimumHeight(200)
+            self.video.setMaximumHeight(300)
+            self.player.setVideoOutput(self.video)
+            self.player.errorOccurred.connect(self._media_error)
+            self.player.positionChanged.connect(self._stop_at_cue_end)
+            self.player.setSource(QUrl.fromLocalFile(str(video)))
+            log.info("پخش آماده شد")
+        except Exception as error:  # noqa: BLE001 - the editor must still open
+            log.warning("پخش در دسترس نیست: %s", error)
+            self.player = None
+            self.video = None
+
+    def _media_error(self, error, message: str = "") -> None:
+        log.warning("خطای پخش: %s %s", error, message)
 
     # ---------------------------------------------------------------- layout
 
@@ -235,11 +277,8 @@ class EditorDialog(QDialog):
         self.summary.setObjectName("Muted")
         layout.addWidget(self.summary)
 
-        self.video = QVideoWidget()
-        self.video.setMinimumHeight(200)
-        self.video.setMaximumHeight(300)
-        self.player.setVideoOutput(self.video)
-        layout.addWidget(self.video)
+        if self.video is not None:
+            layout.addWidget(self.video)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["شروع", "پایان", "مدت", "CPS", "متن"])
@@ -392,9 +431,11 @@ class EditorDialog(QDialog):
     # -------------------------------------------------------------- playback
 
     def play_selected(self) -> None:
-        """Play the audio of the current line and stop where it ends."""
+        """Play the current line, and stop where it ends."""
+        from PySide6.QtMultimedia import QMediaPlayer
+
         row = self._current_row()
-        if row >= len(self.cues):
+        if self.player is None or row >= len(self.cues):
             return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
@@ -406,14 +447,18 @@ class EditorDialog(QDialog):
 
     def _row_selected(self, row: int, column: int, *_rest) -> None:
         """Park the video on the selected line without starting playback."""
-        if not self.follow_video or row < 0 or row >= len(self.cues):
+        from PySide6.QtMultimedia import QMediaPlayer
+
+        if self.player is None or not self.follow_video:
+            return
+        if row < 0 or row >= len(self.cues):
             return
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             return  # do not fight an ongoing playback
         self.player.setPosition(int(max(0.0, self.cues[row].start) * 1000))
 
     def _stop_at_cue_end(self, position_ms: int) -> None:
-        if self.stop_at and position_ms >= self.stop_at * 1000:
+        if self.player is not None and self.stop_at and position_ms >= self.stop_at * 1000:
             self.player.pause()
             self.stop_at = 0.0
 

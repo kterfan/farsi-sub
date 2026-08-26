@@ -54,13 +54,19 @@ def _already_running() -> bool:
     """
     probe = QLocalSocket()
     probe.connectToServer(SOCKET_NAME)
-    if probe.waitForConnected(300):
-        probe.write(b"raise")
-        probe.flush()
-        probe.waitForBytesWritten(300)
-        probe.disconnectFromServer()
-        return True
-    return False
+    if not probe.waitForConnected(300):
+        return False
+
+    probe.write(b"raise")
+    probe.flush()
+    probe.waitForBytesWritten(300)
+
+    # A crashed instance can leave its pipe behind on Windows: connecting then
+    # succeeds and this copy would exit silently, so the app "does not open".
+    # Only a live instance answers, so an unanswered probe means carry on.
+    alive = probe.waitForReadyRead(600) and bool(probe.readAll())
+    probe.disconnectFromServer()
+    return alive
 
 
 def _listen(window) -> QLocalServer:
@@ -71,8 +77,11 @@ def _listen(window) -> QLocalServer:
     def wake() -> None:
         connection = server.nextPendingConnection()
         if connection is not None:
-            # Nothing to read back; closing it straight away keeps PySide from
-            # trying to wrap a slot it cannot.
+            # The reply is what proves this instance is alive, not merely a
+            # pipe left behind by a crash.
+            connection.write(b"ok")
+            connection.flush()
+            connection.waitForBytesWritten(300)
             connection.disconnectFromServer()
         window.showNormal()
         window.raise_()

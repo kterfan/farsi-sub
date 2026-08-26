@@ -12,3 +12,4 @@ assets/fonts/
 
 __pycache__/
 *.pyc
+dist/
