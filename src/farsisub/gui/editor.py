@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QLineEdit,
     QStyledItemDelegate,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from ..config import AppConfig
 from ..models import Cue, Project, Word
@@ -213,6 +215,9 @@ class EditorDialog(QDialog):
         self.player.setSource(QUrl.fromLocalFile(str(project.video_path)))
         self.stop_at = 0.0
         self.player.positionChanged.connect(self._stop_at_cue_end)
+        # Follow the video while editing: whatever line is selected, the
+        # picture sits on it.
+        self.follow_video = True
 
         cues = build_cues(project.words, config.profile, config.text)
         self.cues = cues_to_editable(project, cues)
@@ -230,6 +235,12 @@ class EditorDialog(QDialog):
         self.summary.setObjectName("Muted")
         layout.addWidget(self.summary)
 
+        self.video = QVideoWidget()
+        self.video.setMinimumHeight(200)
+        self.video.setMaximumHeight(300)
+        self.player.setVideoOutput(self.video)
+        layout.addWidget(self.video)
+
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["شروع", "پایان", "مدت", "CPS", "متن"])
         self.table.verticalHeader().setVisible(False)
@@ -243,6 +254,7 @@ class EditorDialog(QDialog):
         header.setSectionResizeMode(COL_TEXT, QHeaderView.Stretch)
         self.table.setItemDelegateForColumn(COL_TEXT, MarkingDelegate(self))
         self.table.itemChanged.connect(self._text_edited)
+        self.table.currentCellChanged.connect(self._row_selected)
         layout.addWidget(self.table, stretch=1)
 
         buttons = QHBoxLayout()
@@ -254,6 +266,11 @@ class EditorDialog(QDialog):
         self.merge_button.clicked.connect(self.merge_selected)
         self.delete_button = QPushButton("حذف خط")
         self.delete_button.clicked.connect(self.delete_selected)
+        self.continuous_box = QCheckBox("پخش پیوسته")
+        self.continuous_box.setToolTip(
+            "به‌جای ایستادن سر همان خط، ویدیو ادامه می‌دهد و تو همراهش می‌خوانی"
+        )
+
         self.play_button = QPushButton("پخش این خط (Space)")
         self.play_button.setToolTip("صدای همین خط را از ویدیو پخش می‌کند")
         self.play_button.clicked.connect(self.play_selected)
@@ -283,6 +300,7 @@ class EditorDialog(QDialog):
         self.export_button.clicked.connect(self.export)
 
         buttons.addWidget(self.play_button)
+        buttons.addWidget(self.continuous_box)
         buttons.addWidget(self.undo_button)
         buttons.addWidget(self.redo_button)
         buttons.addWidget(self.split_button)
@@ -382,9 +400,17 @@ class EditorDialog(QDialog):
             self.player.pause()
             return
         cue = self.cues[row]
-        self.stop_at = cue.end + 0.15
+        self.stop_at = 0.0 if self.continuous_box.isChecked() else cue.end + 0.15
         self.player.setPosition(int(max(0.0, cue.start - 0.1) * 1000))
         self.player.play()
+
+    def _row_selected(self, row: int, column: int, *_rest) -> None:
+        """Park the video on the selected line without starting playback."""
+        if not self.follow_video or row < 0 or row >= len(self.cues):
+            return
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            return  # do not fight an ongoing playback
+        self.player.setPosition(int(max(0.0, self.cues[row].start) * 1000))
 
     def _stop_at_cue_end(self, position_ms: int) -> None:
         if self.stop_at and position_ms >= self.stop_at * 1000:
