@@ -4,8 +4,8 @@
 
 ## وضعیت فعلی
 
-هسته پیاده‌سازی شده و تست‌هایش سبز است. موتور ASR هنوز وصل نشده چون به باینری
-whisper.cpp و فایل مدل نیاز دارد.
+نسخه ۱.۵.۲ — خط لوله کامل روی GPU کار می‌کند و نصاب ویندوز ساخته می‌شود.
+وضعیت روز و کارهای باز در [HANDOFF.md](HANDOFF.md) است.
 
 | بخش | وضعیت |
 |---|---|
@@ -24,7 +24,7 @@ whisper.cpp و فایل مدل نیاز دارد.
 | ویرایشگر: اصلاح کلمه، تقسیم و ادغام خط، نیم‌فاصله | ✅ |
 | دیکشنری اصلاحات آموزش‌پذیر | ✅ |
 | دستیار اولین اجرا و دانلود مدل | ✅ |
-| نصاب ویندوز | ⬜ نسخه ۱.۱ |
+| نصاب ویندوز (Inno Setup، بدون نیاز به ادمین) | ✅ |
 
 ## معماری
 
@@ -64,7 +64,11 @@ farsi-sub\data\glossary.json اصلاح‌های یادگرفته‌شده
 PYTHONPATH=src python -m farsisub.cli video.mp4 --profile smart
 PYTHONPATH=src python -m farsisub.cli video.fsub --profile reels --render-only
 PYTHONPATH=src python -m farsisub.cli --list-models
+PYTHONPATH=src python -m farsisub.cli --version
 ```
+
+اگر پروژه در ویرایشگر شکل داده شده باشد، `--render-only` همان خط‌های ویرایش‌شده
+را می‌نویسد و سبک فقط شکست سطر را تعیین می‌کند.
 
 ## تست
 
@@ -73,12 +77,16 @@ python tests/run_tests.py     # بدون نیاز به pytest
 pytest tests/                 # وقتی venv ساخته شد
 ```
 
+تست‌ها در یک پوشه داده موقت اجرا می‌شوند (`FARSISUB_DATA`)، نه در `data\` واقعی
+برنامه. تست‌های ویرایشگر به PySide6 نیاز دارند.
+
 ## مسیرها
 
 | چه چیزی | کجا |
 |---|---|
 | باینری whisper.cpp و مدل VAD | `bin/` (یا متغیر `FARSISUB_BIN`) |
-| مدل‌های ASR | `%LOCALAPPDATA%\FarsiSub\models` (یا `FARSISUB_DATA`) |
+| مدل‌های ASR | `data\models\` کنار برنامه (یا `FARSISUB_DATA`)؛ پوشه‌های دیگر در `data\model_dirs.txt` |
+| پروژه‌ها، لاگ، دیکشنری | `data\projects\`، `data\logs\`، `data\glossary.json` |
 
 ## نکات فنی که به‌راحتی خراب می‌کنند
 
@@ -98,8 +106,6 @@ pytest tests/                 # وقتی venv ساخته شد
 - `-ml` و `-sow` نباید فعال شوند؛ قطعه‌بندی کار ماست
 - توکن‌ها زیرکلمه‌ای‌اند؛ اطمینان هر کلمه = **کمینه** احتمال توکن‌هایش
 - توکن‌های کنترلی مثل `[_TT_350]` رقم دارند و باید صریح فیلتر شوند
-
-نقشه کامل: `C:\Users\Erfan\.claude\plans\cached-giggling-moonbeam.md`
 
 ## لایسنس
 

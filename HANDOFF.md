@@ -7,13 +7,13 @@
 ```
 نسخه نصب‌شده : %LOCALAPPDATA%\Programs\FarsiSub\FarsiSub.exe
 از سورس       : C:\Users\Erfan\projects\farsi-sub\FarsiSub.bat
-تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۸۹ تست)
+تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۱۸ تست)
 بیلد          : .venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
 بررسی بسته    : .venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
 نصاب          : "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
 ```
 
-نسخه فعلی: **۱.۱.۳** — `dist\FarsiSub-1.1.3-Setup.exe` (۴۱۰ مگابایت)
+نسخه فعلی: **۱.۵.۲** — `dist\FarsiSub-1.5.2-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`)
 
 ## داده‌ها
 
@@ -84,4 +84,6 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 - **`%LOCALAPPDATA%` برای پروسه‌های سندباکس بازنویسی می‌شود.** داده‌ها عمداً کنار برنامه‌اند.
 - **سیگنال Qt را با lambda وصل نکن.** بدون شیء گیرنده، اسلات روی نخ کارگر اجرا می‌شود و دست زدن به ویجت از آنجا access violation است.
 - **الگوی حذف در Inno بدون لنگر، هر پوشه هم‌نام را می‌گیرد** — یک بار `_internal\hazm\data` را برد و برنامه سر اولین جمله فارسی مرد.
+- **`Cancelled` عمداً `BaseException` است.** مدل دوم و بازیابی حفره‌ها هر `Exception` را می‌گیرند تا شکست آن‌ها رونویسی اول را نبرد؛ لغوی که از `RuntimeError` بود همان‌جا بلعیده می‌شد و پردازش تا آخر ادامه پیدا می‌کرد. لغو هم باید پروسه whisper-cli را بکشد (`whispercpp.stop_running`)، وگرنه روی GPU می‌ماند.
+- **ادامه خودکار صف فقط فایل‌های «در صف» را برمی‌دارد.** برداشتن فایل‌های «خطا» یعنی فایل لغوشده بلافاصله از نو شروع می‌شد و فایل خراب بی‌نهایت تکرار.
 - **مدل فاین‌تیون فارسی بهتر نبود.** روی دو ویدیو: پوشش کمتر، اطمینان کمتر، و نوشتار محاوره‌ای («چیو»، «بهرانو»). `large-v3` پیش‌فرض ماند.
