@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
-SegmentMode = Literal["sentence", "smart", "reels"]
+SegmentMode = Literal["sentence", "smart", "reels", "word"]
 
 
 @dataclass
@@ -122,6 +122,19 @@ BUILTIN_PROFILES: dict[str, StyleProfile] = {
         phrase_min_words=3,
         phrase_max_words=5,
         keyword_solo=True,
+    ),
+    "word": StyleProfile(
+        name="word",
+        label="کلمه به کلمه",
+        mode="word",
+        # One word at a time, in step with the voice. Words follow each other
+        # without a gap: a gap between every word reads as flicker.
+        max_lines=1,
+        max_chars_per_line=28,
+        min_duration=0.3,
+        max_duration=2.0,
+        max_cps=40.0,
+        min_gap=0.0,
     ),
 }
 

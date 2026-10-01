@@ -18,7 +18,14 @@ from ..config import StyleProfile, TextRules
 from ..models import Cue, Project, Word
 from ..text.normalize import apply_punctuation_rules, normalize_text
 from .breaks import ends_clause, ends_sentence as _ends_sentence
-from .breaks import COST_PLAIN, is_clitic, is_suffix, token_break_cost, word_break_cost
+from .breaks import (
+    COST_PLAIN,
+    is_clitic,
+    is_light_verb,
+    is_suffix,
+    token_break_cost,
+    word_break_cost,
+)
 
 
 def _bad_cue_start(text: str) -> bool:
@@ -318,9 +325,44 @@ def _apply_keyword_solos(
     return out
 
 
+# Word mode: a word shown for less than this is a flicker, not a word.
+WORD_MIN_SCREEN = 0.25
+WORD_MAX_GROUP = 3
+
+
+def _word_groups(words: list[Word], profile: StyleProfile) -> list[WordGroup]:
+    """One word per cue, in step with the voice.
+
+    A few words cannot stand alone and ride with the one before them: a
+    detached suffix ("ها", "تر"), an enclitic ("رو", "و"), the light verb of a
+    compound ("صحبت کنم"). So does a word spoken too fast to be read on its
+    own. A group never grows past three words or one line.
+    """
+    groups: list[WordGroup] = []
+    for i, word in enumerate(words):
+        screen = (words[i + 1].start if i + 1 < len(words) else word.end) - word.start
+        leans = is_suffix(word.text) or is_clitic(word.text) or is_light_verb(word.text)
+        if groups and not _ends_sentence(words[i - 1].text):
+            last = groups[-1]
+            previous_screen = word.start - words[last.start].start
+            too_fast = screen < WORD_MIN_SCREEN or previous_screen < WORD_MIN_SCREEN
+            fits = _text_len(words, last.start, i + 1) <= profile.max_chars_per_line
+            # A leaning word always rides along (alone it would read as a
+            # broken line); a merely fast one only while the group is small.
+            if fits and (leans or (too_fast and last.end - last.start < WORD_MAX_GROUP)):
+                last.end = i + 1
+                continue
+        groups.append(WordGroup(start=i, end=i + 1))
+    for g in groups:
+        g.continues = not _ends_sentence(words[g.end - 1].text)
+    return groups
+
+
 def group_words(words: list[Word], profile: StyleProfile) -> list[WordGroup]:
     if not words:
         return []
+    if profile.mode == "word":
+        return _word_groups(words, profile)
     groups: list[WordGroup] = []
     for start, end in _split_sentences(words):
         for clause_start, clause_end in _split_clauses(words, start, end):
