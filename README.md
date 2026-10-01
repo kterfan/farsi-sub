@@ -100,3 +100,7 @@ pytest tests/                 # وقتی venv ساخته شد
 - توکن‌های کنترلی مثل `[_TT_350]` رقم دارند و باید صریح فیلتر شوند
 
 نقشه کامل: `C:\Users\Erfan\.claude\plans\cached-giggling-moonbeam.md`
+
+## لایسنس
+
+MIT — فایل [LICENSE](LICENSE).
