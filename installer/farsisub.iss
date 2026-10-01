@@ -8,7 +8,7 @@
 
 #define AppName "FarsiSub"
 ; Same number as __version__ in src/farsisub/__init__.py.
-#define AppVersion "1.5.2"
+#define AppVersion "1.6.0"
 #define AppPublisher "Erfan"
 #define AppExe "FarsiSub.exe"
 

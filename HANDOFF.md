@@ -7,13 +7,28 @@
 ```
 نسخه نصب‌شده : %LOCALAPPDATA%\Programs\FarsiSub\FarsiSub.exe
 از سورس       : C:\Users\Erfan\projects\farsi-sub\FarsiSub.bat
-تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۱۸ تست)
+تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۴۶ تست)
 بیلد          : .venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
 بررسی بسته    : .venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
 نصاب          : "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
 ```
 
-نسخه فعلی: **۱.۵.۲** — `dist\FarsiSub-1.5.2-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`)
+نسخه فعلی: **۱.۶.۰** — `dist\FarsiSub-1.6.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
+
+## انتشار نسخه تازه (روی ویندوز)
+
+```
+git pull                                                   (شاخه نسخه)
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python.exe tests\run_tests.py                 همه باید سبز باشد
+.venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
+.venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
+```
+
+بعد از نصب و چک دستی: PR را در main ادغام کن، tag `v1.6.0` بزن و در GitHub → Releases یک انتشار تازه با `dist\FarsiSub-1.6.0-Setup.exe` و متن همان بخش از `CHANGELOG.md` بساز.
+
+چک دستی قبل از انتشار: یک ویدیوی واقعی (یکی افقی، یکی عمودی از موبایل) با هر چهار سبک؛ لغو وسط پردازش؛ «ویدیو با زیرنویس» روی ویدیوی موبایل (نباید کج شود)؛ خروجی ASS در VLC؛ تغییر تم و بستن و باز کردن برنامه (تنظیمات باید بماند).
 
 ## داده‌ها
 

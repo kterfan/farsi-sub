@@ -4,15 +4,15 @@
 
 ## وضعیت فعلی
 
-نسخه ۱.۵.۲ — خط لوله کامل روی GPU کار می‌کند و نصاب ویندوز ساخته می‌شود.
+نسخه ۱.۶.۰ — خط لوله کامل روی GPU کار می‌کند و نصاب ویندوز ساخته می‌شود. تغییرات هر نسخه در [CHANGELOG.md](CHANGELOG.md).
 وضعیت روز و کارهای باز در [HANDOFF.md](HANDOFF.md) است.
 
 | بخش | وضعیت |
 |---|---|
 | ساختار داده و فایل پروژه `.fsub` | ✅ |
-| سه سبک زیرنویس: جمله‌ای، هوشمند، ریلز فارسی | ✅ |
+| چهار سبک زیرنویس: جمله‌ای، هوشمند، ریلز فارسی، کلمه به کلمه + سبک شخصی | ✅ |
 | قوانین نگارش فارسی (نیم‌فاصله، ارقام، نقطه‌گذاری) | ✅ |
-| خروجی SRT / VTT / TXT با BOM | ✅ |
+| خروجی SRT / VTT / ASS / TXT و ویدیو با زیرنویس سوخته (MP4) | ✅ |
 | ساخت دستور whisper.cpp و پارس JSON آن | ✅ |
 | CLI | ✅ |
 | باینری whisper.cpp + مدل (دانلود خودکار) | ✅ |
@@ -21,7 +21,7 @@
 | خط لوله کامل: ویدیو → SRT روی GPU | ✅ |
 | توکن‌های طراحی رابط | ✅ |
 | رابط گرافیکی (drag & drop، صف، ترکیب دو مدل) | ✅ |
-| ویرایشگر: اصلاح کلمه، تقسیم و ادغام خط، نیم‌فاصله | ✅ |
+| ویرایشگر: اصلاح کلمه، تقسیم و ادغام خط، نیم‌فاصله، موج صدا، جستجو و جایگزینی، کلمه کلیدی دستی | ✅ |
 | دیکشنری اصلاحات آموزش‌پذیر | ✅ |
 | دستیار اولین اجرا و دانلود مدل | ✅ |
 | نصاب ویندوز (Inno Setup، بدون نیاز به ادمین) | ✅ |
@@ -63,6 +63,7 @@ farsi-sub\data\glossary.json اصلاح‌های یادگرفته‌شده
 ```bash
 PYTHONPATH=src python -m farsisub.cli video.mp4 --profile smart
 PYTHONPATH=src python -m farsisub.cli video.fsub --profile reels --render-only
+PYTHONPATH=src python -m farsisub.cli video.fsub --profile word --format ass --render-only
 PYTHONPATH=src python -m farsisub.cli --list-models
 PYTHONPATH=src python -m farsisub.cli --version
 ```
