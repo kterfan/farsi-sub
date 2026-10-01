@@ -32,7 +32,7 @@ from . import theme
 
 def describe_hardware() -> str:
     """What the engine will actually run on, in plain words."""
-    if (locate.bin_dir() / "ggml-cuda.dll").exists():
+    if locate.has_cuda():
         return "شتاب‌دهنده انویدیا نصب است — پردازش چند برابر سریع‌تر"
     return "پردازش روی CPU انجام می‌شود — کندتر ولی روی هر سیستمی کار می‌کند"
 

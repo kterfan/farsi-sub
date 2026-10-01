@@ -165,6 +165,16 @@ def whisper_binary() -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def has_cuda() -> bool:
+    """Whether the shipped engine carries the NVIDIA backend.
+
+    Only says the engine can use a GPU; whisper-cli still falls back to the
+    CPU on its own when the driver or the VRAM is not there.
+    """
+    folder = bin_dir()
+    return any((folder / name).exists() for name in ("ggml-cuda.dll", "libggml-cuda.so"))
+
+
 def vad_model() -> Path | None:
     candidate = bin_dir() / "ggml-silero-v5.1.2.bin"
     return candidate if candidate.exists() else None

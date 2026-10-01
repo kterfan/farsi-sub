@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="large-v3", help="نام مدل")
     parser.add_argument("--language", default="fa", help="زبان صدا (پیش‌فرض فارسی)")
     parser.add_argument("--output-dir", help="پوشه خروجی (پیش‌فرض: کنار ویدیو)")
-    parser.add_argument("--format", default="srt", choices=["srt", "vtt", "txt"])
+    parser.add_argument("--format", default="srt", choices=["srt", "vtt", "ass", "txt"])
     parser.add_argument("--latin-digits", action="store_true", help="ارقام لاتین به‌جای فارسی")
     parser.add_argument("--keep-period", action="store_true", help="نقطه انتهای جمله حفظ شود")
     parser.add_argument("--no-bom", action="store_true", help="بدون BOM در فایل خروجی")

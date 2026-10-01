@@ -72,6 +72,9 @@ class Cue:
     # Indices into the source WordStream, so the editor can walk back from a
     # cue to the words (and their confidences) that produced it.
     word_range: tuple[int, int] | None = None
+    # A keyword standing alone on screen; styled outputs (ASS, burned-in
+    # video) give it its own colour.
+    keyword: bool = False
 
     @property
     def text(self) -> str:

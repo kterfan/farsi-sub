@@ -30,6 +30,8 @@ class MediaInfo:
     duration: float
     audio_codec: str = ""
     video_codec: str = ""
+    width: int = 0
+    height: int = 0
 
 
 def probe(path: str | Path) -> MediaInfo:
@@ -49,6 +51,8 @@ def probe(path: str | Path) -> MediaInfo:
                 duration=duration,
                 audio_codec=audio.codec_context.name if audio else "",
                 video_codec=video.codec_context.name if video else "",
+                width=int(video.codec_context.width or 0) if video else 0,
+                height=int(video.codec_context.height or 0) if video else 0,
             )
     except Exception as error:
         raise AudioError(f"فایل قابل خواندن نیست: {error}") from error
@@ -105,7 +109,12 @@ def extract_wav(
     return dst
 
 
-def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
+def energy_envelope(
+    path: str | Path,
+    bin_ms: int = BIN_MS,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+):
     """RMS loudness per time bin, as a numpy array."""
     import av
     import numpy as np
@@ -134,6 +143,8 @@ def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
                     carry = carry[usable:]
 
         for frame in container.decode(stream):
+            if checkpoint:
+                checkpoint()
             take(resampler.resample(frame))
         take(resampler.resample(None))  # the tail the resampler held back
 

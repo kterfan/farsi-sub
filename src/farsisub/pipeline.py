@@ -22,7 +22,7 @@ from .models import Project, Word
 from .render.keywords import mark_keywords
 from .render.merge import arbitrate_repeats, merge_streams
 from .render.segment import project_cues
-from .render.writers import write_subtitle
+from .render.writers import DEFAULT_FRAME, write_subtitle
 from .text import corrections as corrections_module
 from .text.repetition import drop_repetitions
 from .text.normalize import normalize_word
@@ -357,7 +357,24 @@ def render(project: Project, config: AppConfig, *, suffix: str = ".srt") -> Path
     """
     cues = project_cues(project, config.profile, config.text)
     target = output_path(Path(project.video_path), config, suffix)
-    return write_subtitle(cues, target, bom=config.text.bom)
+    return write_subtitle(
+        cues,
+        target,
+        bom=config.text.bom,
+        style=config.ass_style,
+        frame=video_frame(project.video_path) if suffix == ".ass" else DEFAULT_FRAME,
+    )
+
+
+def video_frame(video: str | Path) -> tuple[int, int]:
+    """The picture size, for styled output; a sensible default when unknown."""
+    try:
+        info = audio_module.probe(video)
+    except audio_module.AudioError:
+        return DEFAULT_FRAME
+    if info.width > 0 and info.height > 0:
+        return info.width, info.height
+    return DEFAULT_FRAME
 
 
 def process(

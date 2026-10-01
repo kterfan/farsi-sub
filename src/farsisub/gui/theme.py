@@ -109,6 +109,23 @@ LIGHT = Palette(
 )
 
 
+# The palette the main window is drawn in right now; painted widgets read it
+# so a theme switch reaches them too.
+active: Palette = DARK
+
+
+def palette_for(name: str) -> Palette:
+    return LIGHT if name == "light" else DARK
+
+
+def apply(app, name: str) -> Palette:
+    """Switch the whole application to the named theme."""
+    global active
+    active = palette_for(name)
+    app.setStyleSheet(stylesheet(active))
+    return active
+
+
 def font_stack() -> str:
     return f'"{FONT_FAMILY}", "{FONT_FALLBACK}"'
 

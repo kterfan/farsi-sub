@@ -471,6 +471,14 @@ def _timings(
     )
 
 
+def _all_keywords(words: list[Word], g: WordGroup, profile: StyleProfile) -> bool:
+    """Word mode: a cue whose only real word is a keyword gets the keyword colour."""
+    if profile.mode != "word":
+        return False
+    host = [w for w in words[g.start : g.end] if not (is_suffix(w.text) or is_clitic(w.text))]
+    return bool(host) and all(w.keyword for w in host)
+
+
 def render_cues(
     words: list[Word],
     groups: list[WordGroup],
@@ -492,6 +500,7 @@ def render_cues(
                 end=end,
                 lines=wrap_lines(text, profile),
                 word_range=(g.start, g.end),
+                keyword=g.solo_keyword or _all_keywords(words, g, profile),
             )
         )
     return cues
@@ -521,10 +530,19 @@ def cues_from_lines(
         )
         for words, _ in kept
     ]
+    # The colour follows the keyword in reels and word mode; the hold after
+    # it (the third span field) only in reels, or every word after a keyword
+    # would start a third of a second late.
+    coloured = [
+        (profile.keyword_solo or profile.mode == "word")
+        and len(words) == 1
+        and bool(words[0].keyword)
+        for words, _ in kept
+    ]
     return [
-        Cue(index=index, start=start, end=end, lines=wrap_lines(text, profile))
-        for index, ((_, text), (start, end)) in enumerate(
-            zip(kept, timings_for_spans(spans, profile)), start=1
+        Cue(index=index, start=start, end=end, lines=wrap_lines(text, profile), keyword=colour)
+        for index, ((_, text), (start, end), colour) in enumerate(
+            zip(kept, timings_for_spans(spans, profile), coloured), start=1
         )
     ]
 

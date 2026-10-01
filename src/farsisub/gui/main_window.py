@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import BUILTIN_PROFILES, AppConfig
+from ..config import BUILTIN_PROFILES, OUTPUT_FORMATS, AppConfig, save_settings
 from ..engine import locate, modelstore
 from . import theme
 from .editor import EditorDialog
@@ -91,11 +91,11 @@ class AppMark(QWidget):
 
         tile = QPainterPath()
         tile.addRoundedRect(box, theme.RADIUS, theme.RADIUS)
-        painter.fillPath(tile, QColor(theme.DARK.accent))
+        painter.fillPath(tile, QColor(theme.active.accent))
 
         # Two subtitle lines, the shorter one centred underneath.
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(theme.DARK.accent_text))
+        painter.setBrush(QColor(theme.active.accent_text))
         unit = self._size / 10
         painter.drawRoundedRect(
             QRectF(unit * 2, unit * 5.4, unit * 6, unit * 0.9), unit * 0.45, unit * 0.45
@@ -120,7 +120,7 @@ class DropGlyph(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         unit = self._size / 16
-        pen = QPen(QColor(theme.DARK.text_muted))
+        pen = QPen(QColor(theme.active.text_muted))
         pen.setWidthF(unit * 0.9)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
@@ -283,9 +283,31 @@ class MainWindow(QMainWindow):
         row.addLayout(names)
 
         row.addStretch(1)
+        # What the engine runs on, so a slow run is not a mystery.
+        self.hardware_label = QLabel("GPU انویدیا" if locate.has_cuda() else "CPU")
+        self.hardware_label.setObjectName("Chip")
+        self.hardware_label.setToolTip(
+            "موتور با شتاب‌دهنده انویدیا ساخته شده؛ اگر کارت یا درایور نباشد خودش روی CPU می‌رود"
+            if locate.has_cuda()
+            else "پردازش روی CPU انجام می‌شود — کندتر ولی روی هر سیستمی کار می‌کند"
+        )
+        row.addWidget(self.hardware_label)
         self.engine_label = QLabel()
         self.engine_label.setObjectName("Chip")
         row.addWidget(self.engine_label)
+
+        self.theme_button = QPushButton()
+        self.theme_button.setObjectName("Quiet")
+        self.theme_button.setToolTip("تم روشن یا تیره")
+        self.theme_button.clicked.connect(self.toggle_theme)
+        self._sync_theme_button()
+        row.addWidget(self.theme_button)
+
+        self.settings_button = QPushButton("تنظیمات")
+        self.settings_button.setObjectName("Quiet")
+        self.settings_button.setToolTip("طول خط، زمان نمایش، حساسیت کلمه کلیدی، ظاهر زیرنویس")
+        self.settings_button.clicked.connect(self.open_settings)
+        row.addWidget(self.settings_button)
         return box
 
     def _options(self) -> QWidget:
@@ -296,12 +318,17 @@ class MainWindow(QMainWindow):
         row.setSpacing(theme.SPACE * 3)
 
         self.profile_box = QComboBox()
-        for name, profile in BUILTIN_PROFILES.items():
-            self.profile_box.addItem(profile.label, name)
-        self.profile_box.setCurrentIndex(
-            self.profile_box.findData(self.config.profile.name)
-        )
+        self._fill_profiles()
         self.profile_box.currentIndexChanged.connect(self._profile_changed)
+
+        self.format_box = QComboBox()
+        for fmt in OUTPUT_FORMATS:
+            self.format_box.addItem(fmt.upper(), fmt)
+        self.format_box.setToolTip(
+            "SRT برای همه پلیرها و ادیتورها؛ ASS با فونت و رنگ؛ VTT برای وب؛ TXT فقط متن"
+        )
+        self.format_box.setCurrentIndex(max(0, self.format_box.findData(self.config.output_format)))
+        self.format_box.currentIndexChanged.connect(self._format_changed)
 
         self.model_box = QComboBox()
         self.model_box.currentIndexChanged.connect(self._model_changed)
@@ -312,19 +339,16 @@ class MainWindow(QMainWindow):
             "مدل دوم فقط جاهایی را می‌نویسد که مدل اول ساکت مانده. "
             "دقیق‌تر است ولی زمان پردازش دو برابر می‌شود."
         )
-        self.merge_box.toggled.connect(self._merge_toggled)
+        self.merge_box.setChecked(bool(self.config.merge_model))
+        self.merge_box.toggled.connect(self._merge_clicked)
 
         self.digits_box = QCheckBox("ارقام فارسی")
         self.digits_box.setChecked(self.config.text.persian_digits)
-        self.digits_box.toggled.connect(
-            lambda on: setattr(self.config.text, "persian_digits", on)
-        )
+        self.digits_box.toggled.connect(self._digits_toggled)
 
         self.period_box = QCheckBox("نقطه انتهای جمله")
         self.period_box.setChecked(not self.config.text.strip_final_period)
-        self.period_box.toggled.connect(
-            lambda on: setattr(self.config.text, "strip_final_period", not on)
-        )
+        self.period_box.toggled.connect(self._period_toggled)
 
         def field(caption: str, widget) -> QVBoxLayout:
             """A control with its label above it, not floating beside it."""
@@ -338,6 +362,7 @@ class MainWindow(QMainWindow):
 
         row.addLayout(field("سبک زیرنویس", self.profile_box))
         row.addLayout(field("مدل", self.model_box))
+        row.addLayout(field("قالب خروجی", self.format_box))
 
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
@@ -565,16 +590,73 @@ class MainWindow(QMainWindow):
         self._show_queue()  # an empty queue means the invitation comes back
         self._update_buttons()
 
+    def _fill_profiles(self) -> None:
+        self.profile_box.blockSignals(True)
+        self.profile_box.clear()
+        for name, profile in BUILTIN_PROFILES.items():
+            self.profile_box.addItem(profile.label, name)
+        if self.config.custom_profile is not None:
+            self.profile_box.addItem(self.config.custom_profile.label, self.config.custom_profile.name)
+        self.profile_box.setCurrentIndex(max(0, self.profile_box.findData(self.config.profile.name)))
+        self.profile_box.blockSignals(False)
+
     def _profile_changed(self, index: int) -> None:
         name = self.profile_box.itemData(index)
-        if name:
-            self.config.profile = BUILTIN_PROFILES[name]
+        if name in BUILTIN_PROFILES:
+            self.config.profile = copy.deepcopy(BUILTIN_PROFILES[name])
+        elif self.config.custom_profile is not None and name == self.config.custom_profile.name:
+            self.config.profile = copy.deepcopy(self.config.custom_profile)
+        self.save_settings()
+
+    def _format_changed(self, index: int) -> None:
+        fmt = self.format_box.itemData(index)
+        if fmt in OUTPUT_FORMATS:
+            self.config.output_format = fmt
+            self.save_settings()
+
+    def _digits_toggled(self, on: bool) -> None:
+        self.config.text.persian_digits = on
+        self.save_settings()
+
+    def _period_toggled(self, on: bool) -> None:
+        self.config.text.strip_final_period = not on
+        self.save_settings()
+
+    def save_settings(self) -> None:
+        """Every choice is kept, so the next start opens the way this one ended."""
+        save_settings(self.config)
+
+    def _sync_theme_button(self) -> None:
+        self.theme_button.setText("تم روشن" if self.config.theme == "dark" else "تم تیره")
+
+    def toggle_theme(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        self.config.theme = "light" if self.config.theme == "dark" else "dark"
+        theme.apply(QApplication.instance(), self.config.theme)
+        self._sync_theme_button()
+        # Painted widgets and coloured cells read the palette when drawn.
+        for row in range(self.table.rowCount()):
+            self._paint_status(self.table.item(row, 1))
+        self.update()
+        for child in self.findChildren(QWidget):
+            child.update()
+        self.save_settings()
+
+    def open_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec():
+            self._fill_profiles()
+            self.save_settings()
 
     def _model_changed(self, index: int) -> None:
         name = self.model_box.itemData(index)
         if name:
             self.config.model_name = name
         self._merge_toggled(self.merge_box.isChecked())
+        self.save_settings()
 
     def _merge_toggled(self, enabled: bool) -> None:
         """Pick the other installed model as the gap filler."""
@@ -586,6 +668,10 @@ class MainWindow(QMainWindow):
             self.config.merge_model = None
             self.merge_box.setText("ترکیب دو مدل")
         self.merge_box.setEnabled(bool(others))
+
+    def _merge_clicked(self, enabled: bool) -> None:
+        self._merge_toggled(enabled)
+        self.save_settings()
 
     def _refresh_model_state(self) -> None:
         installed = locate.installed_models()
@@ -654,7 +740,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QBrush, QColor
 
         token = self.STATUS_COLOURS.get(item.text(), "text_muted")
-        item.setForeground(QBrush(QColor(getattr(theme.DARK, token))))
+        item.setForeground(QBrush(QColor(getattr(theme.active, token))))
 
     def _set_status(self, path: Path, status: str, output: str = "") -> None:
         row = self._row_for(path)
@@ -710,7 +796,7 @@ class MainWindow(QMainWindow):
 
         # A copy: the worker reads the settings on its own thread for minutes,
         # and a switch flipped meanwhile must not land halfway through a file.
-        worker = TranscribeWorker(path, copy.deepcopy(self.config))
+        worker = TranscribeWorker(path, copy.deepcopy(self.config), suffix=self.config.suffix)
         # Bound methods with `self` as receiver, and QueuedConnection spelled
         # out. A lambda here has no receiver object, so Qt runs it on the
         # WORKER thread -- and touching a widget from there crashes the process
@@ -782,6 +868,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         """Never let the window die while a worker thread is still alive."""
+        self.save_settings()
         if self.job is not None:
             self.stop_requested = True
             if self.job.stop():
@@ -879,6 +966,9 @@ class MainWindow(QMainWindow):
 
         dialog = EditorDialog(project, self.config, self)
         dialog.exec()
+        # A style picked inside the editor is the style from now on.
+        self._fill_profiles()
+        self.save_settings()
 
     def open_output_folder(self) -> None:
         if self.last_output is None:

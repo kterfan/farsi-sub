@@ -9,7 +9,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
-from ..config import AppConfig
+from ..config import load_settings
 from ..logging_setup import setup as setup_logging
 from . import theme
 from .first_run import FirstRunDialog
@@ -25,9 +25,10 @@ def build_app(argv: list[str] | None = None) -> tuple[QApplication, MainWindow]:
 
     theme.load_fonts()
     app.setFont(QFont(theme.FONT_FAMILY, theme.FONT_BODY))
-    app.setStyleSheet(theme.stylesheet(theme.DARK))
+    config = load_settings()
+    theme.apply(app, config.theme)
 
-    window = MainWindow(AppConfig())
+    window = MainWindow(config)
     return app, window
 
 
