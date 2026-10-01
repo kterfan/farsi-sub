@@ -17,7 +17,7 @@
 
 ## انتشار نسخه تازه
 
-**خودکار (پیشنهادی):** هر push به شاخه‌های `claude/**` یا `main` در گیت‌هاب (Actions → «Windows installer») نصاب را می‌سازد؛ فایل در بخش Artifacts همان اجراست. push یک tag مثل `v1.6.0` همین کار را می‌کند و یک Release هم می‌سازد. فایل: `.github/workflows/build-windows.yml`. نسخه موتور در همان فایل ثابت شده (`ENGINE_VERSION`، الان v1.8.2): آخرین ریلیز whisper.cpp (v1.9.4) فایل CUDA ویندوز ندارد.
+**خودکار (پیشنهادی):** هر push به شاخه‌های `claude/**` یا `master` در گیت‌هاب (Actions → «Windows installer») نصاب را می‌سازد؛ فایل در بخش Artifacts همان اجراست. push یک tag مثل `v1.6.0` همین کار را می‌کند و یک Release هم می‌سازد. فایل: `.github/workflows/build-windows.yml`. نسخه موتور در همان فایل ثابت شده (`ENGINE_VERSION`، الان v1.8.2): آخرین ریلیز whisper.cpp (v1.9.4) فایل CUDA ویندوز ندارد.
 
 **دستی، روی ویندوز:**
 

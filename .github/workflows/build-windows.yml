@@ -10,7 +10,7 @@ name: Windows installer
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [master, main, "claude/**"]
     tags: ["v*"]
 
 permissions:
