@@ -66,10 +66,15 @@ def drop_repetitions(words: list[Word]) -> tuple[list[Word], int]:
             if second + length > len(words):
                 continue
             if _is_loop(words, i, second, length):
-                for j in range(second, second + length):
+                # A stuck decoder rarely stops at one extra copy: every
+                # further copy goes too, each checked against the original.
+                end = second + length
+                while end + length <= len(words) and _is_loop(words, i, end, length):
+                    end += length
+                for j in range(second, end):
                     keep[j] = False
-                removed += length
-                i = second + length - 1
+                removed += end - second
+                i = end - 1
                 break
         i += 1
 

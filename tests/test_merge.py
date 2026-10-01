@@ -41,6 +41,16 @@ def test_looped_phrase_is_removed():
     assert [w.text for w in cleaned] == ["صرفاً", "کارای", "بیشتری", "انجام", "بدی"]
 
 
+def test_a_phrase_looped_three_times_keeps_one_copy():
+    # Only the second copy used to go; the third was compared with the
+    # removed one and survived, so the subtitle still said it twice.
+    one = ["صرفاً", "کارای", "بیشتری", "انجام"]
+    words = phrase(one, 0.0) + phrase(one, 1.2) + phrase(one, 2.4)
+    cleaned, removed = drop_repetitions(words)
+    assert removed == 8
+    assert [w.text for w in cleaned] == one
+
+
 def test_a_real_pause_between_repeats_is_kept():
     # Someone genuinely saying the same thing twice leaves a gap.
     words = phrase(["نه", "لزوماً"], 0.0)
@@ -140,3 +150,34 @@ def test_arbitration_keeps_repeats_both_models_agree_on():
     cleaned, dropped = arbitrate_repeats(list(words), list(words))
     assert dropped == 0
     assert len(cleaned) == len(words)
+
+
+def test_arbitration_judges_a_loop_late_in_the_file_too():
+    # The phrase is said once early on; much later the first model loops it.
+    # Only the first cluster of each phrase used to be looked at.
+    line = ["این", "خیلی", "مهمه", "واقعاً"]
+    primary = phrase(line, 0.0) + phrase(line, 300.0) + phrase(line, 306.0)
+    secondary = phrase(line, 0.0) + phrase(line, 300.0)
+    cleaned, dropped = arbitrate_repeats(primary, secondary)
+    assert dropped == 4
+    assert [w.start for w in cleaned][:1] == [0.0]
+    assert len(cleaned) == 8
+
+
+def test_arbitration_is_fast_on_a_long_video():
+    import random
+    import time
+
+    random.seed(7)
+    vocab = [f"w{i}" for i in range(800)]
+
+    def long_stream(n: int) -> list[Word]:
+        return [
+            Word(text=random.choice(vocab), start=i * 0.35, end=i * 0.35 + 0.3, probability=0.9)
+            for i in range(n)
+        ]
+
+    started = time.perf_counter()
+    arbitrate_repeats(long_stream(15_000), long_stream(15_000))
+    # About ninety minutes of speech. The old search took well over a minute.
+    assert time.perf_counter() - started < 3.0

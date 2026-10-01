@@ -14,6 +14,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from . import __version__
 from .engine import locate
 
 LOG_NAME = "farsisub.log"
@@ -88,7 +89,7 @@ def setup(level: int = logging.INFO) -> Path:
         pass
 
     _configured = True
-    root.info("--- FarsiSub شروع شد | python %s ---", sys.version.split()[0])
+    root.info("--- FarsiSub %s شروع شد | python %s ---", __version__, sys.version.split()[0])
     # Where the app is looking, so a "no models" report can be diagnosed from
     # the log instead of guessed at.
     try:

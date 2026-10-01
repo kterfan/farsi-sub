@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from ..models import Word
 
@@ -54,11 +54,20 @@ def probe(path: str | Path) -> MediaInfo:
         raise AudioError(f"فایل قابل خواندن نیست: {error}") from error
 
 
-def extract_wav(source: str | Path, target: str | Path, sample_rate: int = SAMPLE_RATE) -> Path:
+def extract_wav(
+    source: str | Path,
+    target: str | Path,
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> Path:
     """Pull a 16 kHz mono WAV out of any container.
 
     whisper-cli reads flac/mp3/ogg/wav only -- hand it an mp4 or mkv and it
     simply refuses. PyAV does the demux and resample, so no ffmpeg.exe needed.
+
+    `checkpoint` runs once per decoded frame; raising from it stops the
+    decode. A two hour file takes long enough to be worth cancelling.
     """
     import av
 
@@ -78,10 +87,18 @@ def extract_wav(source: str | Path, target: str | Path, sample_rate: int = SAMPL
                 format="s16", layout="mono", rate=sample_rate
             )
             for frame in container.decode(stream):
+                if checkpoint:
+                    checkpoint()
                 for resampled in resampler.resample(frame):
                     resampled.pts = None
                     for packet in out_stream.encode(resampled):
                         out.mux(packet)
+            # The resampler holds back the last few milliseconds until it is
+            # told the input has ended.
+            for resampled in resampler.resample(None):
+                resampled.pts = None
+                for packet in out_stream.encode(resampled):
+                    out.mux(packet)
             for packet in out_stream.encode(None):
                 out.mux(packet)
 
@@ -105,8 +122,9 @@ def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
         resampler = av.audio.resampler.AudioResampler(
             format="flt", layout="mono", rate=SAMPLE_RATE
         )
-        for frame in container.decode(stream):
-            for resampled in resampler.resample(frame):
+        def take(frames) -> None:
+            nonlocal carry
+            for resampled in frames:
                 chunk = resampled.to_ndarray().reshape(-1).astype(np.float32)
                 carry = np.concatenate((carry, chunk)) if carry.size else chunk
                 usable = (carry.size // samples_per_bin) * samples_per_bin
@@ -114,6 +132,10 @@ def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
                     block = carry[:usable].reshape(-1, samples_per_bin)
                     bins.extend(np.sqrt((block**2).mean(axis=1)).tolist())
                     carry = carry[usable:]
+
+        for frame in container.decode(stream):
+            take(resampler.resample(frame))
+        take(resampler.resample(None))  # the tail the resampler held back
 
     if carry.size:
         bins.append(float(np.sqrt((carry**2).mean())))

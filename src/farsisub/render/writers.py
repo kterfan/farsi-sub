@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..models import Cue
 
-BOM = "﻿"
+BOM = "\ufeff"
 
 
 def format_timestamp(seconds: float, *, sep: str = ",") -> str:

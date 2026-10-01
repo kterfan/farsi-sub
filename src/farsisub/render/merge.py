@@ -101,17 +101,28 @@ ARBITRATION_PHRASE = 4  # shortest phrase worth cross-checking
 ARBITRATION_WINDOW = 25.0  # seconds; copies further apart are treated separately
 
 
-def _phrase_key(words: list[Word], start: int, length: int) -> tuple[str, ...]:
-    return tuple(w.text.strip("،؛:.!؟…") for w in words[start : start + length])
+def _phrase_index(words: list[Word], length: int) -> dict[tuple[str, ...], list[int]]:
+    """Every phrase of `length` words -> where it starts, in one pass.
+
+    Searching the whole stream again for each phrase made arbitration
+    quadratic: 7 s for 4000 words, well over a minute for a 90 minute video.
+    """
+    texts = [w.text.strip("،؛:.!؟…") for w in words]
+    index: dict[tuple[str, ...], list[int]] = {}
+    for i in range(len(texts) - length + 1):
+        index.setdefault(tuple(texts[i : i + length]), []).append(i)
+    return index
 
 
-def _occurrences(words: list[Word], key: tuple[str, ...]) -> list[int]:
-    length = len(key)
-    return [
-        i
-        for i in range(len(words) - length + 1)
-        if _phrase_key(words, i, length) == key
-    ]
+def _clusters(words: list[Word], hits: list[int], window: float) -> list[list[int]]:
+    """Group the copies of one phrase that sit close together in time."""
+    groups: list[list[int]] = []
+    for hit in hits:
+        if groups and words[hit].start - words[groups[-1][0]].start <= window:
+            groups[-1].append(hit)
+        else:
+            groups.append([hit])
+    return groups
 
 
 def arbitrate_repeats(
@@ -125,33 +136,36 @@ def arbitrate_repeats(
     if not secondary or len(primary) < phrase_length * 2:
         return primary, 0
 
+    primary_index = _phrase_index(primary, phrase_length)
+    secondary_index = _phrase_index(secondary, phrase_length)
     drop: set[int] = set()
-    seen: set[tuple[str, ...]] = set()
 
-    for i in range(len(primary) - phrase_length + 1):
-        key = _phrase_key(primary, i, phrase_length)
-        if key in seen or any(index in drop for index in range(i, i + phrase_length)):
-            continue
-        seen.add(key)
-
-        hits = _occurrences(primary, key)
+    # Keys come out in the order they first appear, so phrases are judged in
+    # reading order, as before.
+    for key, hits in primary_index.items():
         if len(hits) < 2:
             continue
-        # Only consider copies that sit close together in time.
-        cluster = [h for h in hits if primary[h].start - primary[hits[0]].start <= window]
-        if len(cluster) < 2:
+        # Nothing left to judge once every copy is already gone. Copies that
+        # were dropped stay in `hits` otherwise, so the words they leave
+        # behind are taken along with them.
+        if all(any(i in drop for i in range(h, h + phrase_length)) for h in hits):
             continue
 
-        start_time = primary[cluster[0]].start - 3.0
-        end_time = primary[cluster[-1]].end + 3.0
-        heard = [
-            h
-            for h in _occurrences(secondary, key)
-            if start_time <= secondary[h].start <= end_time
-        ]
-        allowed = max(1, len(heard))
-        for extra in cluster[allowed:]:
-            drop.update(range(extra, extra + phrase_length))
+        # Every cluster counts, not only the first: a loop twenty minutes in
+        # is as invented as one in the opening seconds.
+        for cluster in _clusters(primary, hits, window):
+            if len(cluster) < 2:
+                continue
+            start_time = primary[cluster[0]].start - 3.0
+            end_time = primary[cluster[-1]].end + 3.0
+            heard = [
+                h
+                for h in secondary_index.get(key, [])
+                if start_time <= secondary[h].start <= end_time
+            ]
+            allowed = max(1, len(heard))
+            for extra in cluster[allowed:]:
+                drop.update(range(extra, extra + phrase_length))
 
     if not drop:
         return primary, 0

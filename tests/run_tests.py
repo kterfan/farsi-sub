@@ -7,11 +7,18 @@ removes the dependency for early development.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# The suite must never write into the real data folder: the editor tests save
+# projects and the window layout, and from a source checkout that folder is
+# the one the app itself uses.
+os.environ.setdefault("FARSISUB_DATA", tempfile.mkdtemp(prefix="farsisub-tests-"))
 
 
 def load(path: Path):
@@ -25,7 +32,15 @@ def load(path: Path):
 def main() -> int:
     passed = failed = 0
     for path in sorted(HERE.glob("test_*.py")):
-        module = load(path)
+        try:
+            module = load(path)
+        except Exception:
+            # One file that cannot even be imported (PySide6 missing, say)
+            # used to end the whole run without a summary.
+            failed += 1
+            print(f"FAIL {path.name} (import)")
+            traceback.print_exc()
+            continue
         for name in sorted(dir(module)):
             if not name.startswith("test_"):
                 continue

@@ -15,13 +15,39 @@ Two details from the whisper.cpp source that quietly break things if missed:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
 from ..models import Word
+
+# The app is built without a console, and a console program started from it
+# gets a black window of its own unless told not to.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+# Every whisper-cli this process has started and not yet reaped, so a cancel
+# or a closing window can stop them from the GUI thread.
+_running: set[subprocess.Popen] = set()
+_running_lock = threading.Lock()
+
+
+def stop_running() -> None:
+    """Kill every whisper-cli started by this process. Safe from any thread.
+
+    The reader loop in `run` then sees the end of the output at once, instead
+    of waiting for a progress line that may be half a minute away.
+    """
+    with _running_lock:
+        processes = list(_running)
+    for process in processes:
+        try:
+            process.kill()
+        except OSError:
+            pass  # already gone
 
 # Tokens that carry control information rather than speech.
 # [_BEG_], [_EOT_], [_TT_350] ... the digits in [_TT_n] matter: a letters-only
@@ -218,11 +244,17 @@ def run(
     *,
     on_progress: Callable[[int], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> list[Word]:
     """Run whisper.cpp once and return the WordStream.
 
     Falls back to CPU (`-ng`) when the GPU path fails, which is what happens on
     an old driver or when the model does not fit in VRAM.
+
+    `checkpoint` is called for every line of output and once the process has
+    ended; raising from it stops the run. Whatever ends the run -- a cancel, an
+    exception in a callback -- the process is killed rather than left
+    decoding on the GPU with nobody reading its output.
     """
     attempts: Iterable[bool] = (True, False) if opts.use_gpu else (False,)
     last_error = ""
@@ -238,20 +270,38 @@ def run(
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            creationflags=_NO_WINDOW,
         )
+        with _running_lock:
+            _running.add(process)
         tail: list[str] = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            line = line.rstrip()
-            tail.append(line)
-            del tail[:-40]
-            if on_log:
-                on_log(line)
-            if on_progress:
-                pct = parse_progress(line)
-                if pct is not None:
-                    on_progress(pct)
-        code = process.wait()
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                if checkpoint:
+                    checkpoint()
+                line = line.rstrip()
+                tail.append(line)
+                del tail[:-40]
+                if on_log:
+                    on_log(line)
+                if on_progress:
+                    pct = parse_progress(line)
+                    if pct is not None:
+                        on_progress(pct)
+            code = process.wait()
+        finally:
+            with _running_lock:
+                _running.discard(process)
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+        # A killed process ends like a failed one; without this a cancel would
+        # be retried on the CPU.
+        if checkpoint:
+            checkpoint()
         if code == 0:
             json_path = out_prefix.with_suffix(out_prefix.suffix + ".json")
             if not json_path.exists():

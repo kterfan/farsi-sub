@@ -45,8 +45,9 @@ import logging
 import os
 
 from ..config import AppConfig
+from ..fileio import atomic_write_text
 from ..models import Cue, EditedLine, Project, Word
-from ..render.segment import build_cues, wrap_lines
+from ..render.segment import build_cues, cues_from_lines
 from ..render.writers import write_subtitle
 from ..text.corrections import add_correction, correct_text, diff_pairs
 from . import theme
@@ -161,6 +162,35 @@ def saved_to_editable(project: Project) -> list[EditableCue]:
 def bare_word(text: str) -> str:
     """A token stripped of what the eye ignores when comparing two lines."""
     return text.strip("،؛:.!؟…‌").replace("‌", "")
+
+
+def _move_token(source: str, target: str, down: bool) -> tuple[str, str] | None:
+    """Move the last (down) or first (up) token of one line onto the other.
+
+    None when the source would be left with no text at all.
+    """
+    tokens = source.split()
+    if len(tokens) < 2:
+        return None
+    if down:
+        return " ".join(tokens[:-1]), f"{tokens[-1]} {target}".strip()
+    return " ".join(tokens[1:]), f"{target} {tokens[0]}".strip()
+
+
+def split_text(text: str, cut: int, of: int) -> tuple[str, str]:
+    """Split a line's text where its words are split: `cut` words out of `of`.
+
+    The text shown is what gets split, never the raw model words: rebuilding
+    from those threw away the user's corrections and the writing rules
+    (Persian digits, dropped commas, ZWNJ). When the text no longer lines up
+    with the words one for one, it is cut at the same share of the line.
+    """
+    tokens = text.split()
+    if len(tokens) < 2:
+        return text.strip(), ""
+    at = cut if len(tokens) == of else round(cut / max(of, 1) * len(tokens))
+    at = max(1, min(at, len(tokens) - 1))
+    return " ".join(tokens[:at]), " ".join(tokens[at:])
 
 
 def cue_index_at(cues: list[EditableCue], starts: list[float], seconds: float) -> int:
@@ -460,6 +490,10 @@ class EditorDialog(QDialog):
         self.video_side_chosen = False
         self._saved_state: dict = {}
         self._finished = False
+        # Whether the lines are the user's own. Until then the style stays in
+        # charge: saving the auto-built lines on every close froze the layout,
+        # and switching to another style later changed nothing in here.
+        self.shaped = bool(project.lines)
         self.stop_at = 0.0
         # A seek before the media is loaded is silently dropped, so it is kept
         # here and replayed the moment the player reports LoadedMedia.
@@ -805,7 +839,7 @@ class EditorDialog(QDialog):
             # made for a portrait video would stick to the next landscape one.
             if self.video_side_chosen:
                 state["video_side"] = self.video_side
-            self._ui_state_path().write_text(json.dumps(state), encoding="utf-8")
+            atomic_write_text(self._ui_state_path(), json.dumps(state))
         except Exception as error:  # noqa: BLE001 - saving a preference is not worth a crash
             log.debug("وضعیت پنجره ذخیره نشد: %s", error)
 
@@ -818,6 +852,8 @@ class EditorDialog(QDialog):
         """
         from ..engine.locate import project_path
 
+        if not self.shaped:
+            return  # nothing shaped by hand; the style still decides the lines
         index = {id(word): position for position, word in enumerate(self.project.words)}
         lines = []
         for cue in self.cues:
@@ -995,23 +1031,26 @@ class EditorDialog(QDialog):
     def _text_edited(self, item: QTableWidgetItem) -> None:
         if item.column() != COL_TEXT:
             return
-        cue = self.cues[item.row()]
+        # Read once: `_reload` below replaces every item, and asking the old
+        # one for its row afterwards raised "C++ object already deleted".
+        row = item.row()
+        cue = self.cues[row]
         if cue.text != item.text().strip():
             self._snapshot()
         cue.text = item.text().strip()
         cue.edited = True
-        self.last_edited_row = item.row()
-        moved = self._rebalance_pair(item.row() - 1) | self._rebalance_pair(item.row())
+        self.last_edited_row = row
+        moved = self._rebalance_pair(row - 1) | self._rebalance_pair(row)
         if moved:
             # A word changed cue, so both spans moved: the whole table has to
             # be redrawn, not just this row.
-            self._reload(keep_row=item.row())
-            self._set_overlay_text(self.cues[item.row()].text)
+            self._reload(keep_row=row)
+            self._set_overlay_text(self.cues[row].text)
             return
         # The edit arrives while the cell editor is still open on this item:
         # replacing it here would pull the ground out from under the editor.
-        self._refresh_row(item.row(), keep_text_item=True)
-        if item.row() == self.table.currentRow():
+        self._refresh_row(row, keep_text_item=True)
+        if row == self.table.currentRow():
             self._set_overlay_text(cue.text)
 
     # -------------------------------------------------------------- playback
@@ -1178,6 +1217,7 @@ class EditorDialog(QDialog):
         return [replace(cue, words=list(cue.words)) for cue in self.cues]
 
     def _snapshot(self) -> None:
+        self.shaped = True
         self.history.append(self._copy_cues())
         del self.history[:-50]  # a long session should not grow without bound
         self.redo_stack.clear()
@@ -1254,14 +1294,21 @@ class EditorDialog(QDialog):
 
         first = EditableCue(words=cue.words[:cut])
         second = EditableCue(words=cue.words[cut:])
-        if at_token is not None and len(tokens) == len(cue.words):
-            # Keep the words the user typed, not the raw model text.
-            first.text = " ".join(tokens[:cut])
-            second.text = " ".join(tokens[cut:])
+        if at_token is not None and 0 < at_token < len(tokens):
+            # The caret says exactly where the text breaks.
+            first.text = " ".join(tokens[:at_token])
+            second.text = " ".join(tokens[at_token:])
         else:
-            first.text = " ".join(w.text for w in first.words)
-            second.text = " ".join(w.text for w in second.words)
-        first.original, second.original = first.text, second.text
+            first.text, second.text = split_text(cue.text, cut, len(cue.words))
+        # Each half keeps its share of the baseline, so a correction made
+        # before the split can still be taught afterwards.
+        if cue.original and cue.original != cue.text:
+            first.original, second.original = split_text(cue.original, cut, len(cue.words))
+        else:
+            first.original, second.original = first.text, second.text
+        for half in (first, second):
+            if not half.text:  # nothing of the shown text fell on this side
+                half.text = half.original = " ".join(w.text for w in half.words)
         first.edited = second.edited = cue.edited
 
         self._snapshot()
@@ -1342,9 +1389,16 @@ class EditorDialog(QDialog):
             word = source.words.pop(0)
             target.words.append(word)
 
-        for cue in (source, target):
-            cue.text = " ".join(w.text for w in cue.words)
-            cue.original = cue.text
+        # The word's text travels with it, as shown on screen. Rebuilding both
+        # lines from the raw model words threw away every correction on them.
+        for attribute in ("text", "original"):
+            moved = _move_token(getattr(source, attribute), getattr(target, attribute), down)
+            if moved is None:
+                for cue in (source, target):
+                    setattr(cue, attribute, " ".join(w.text for w in cue.words))
+            else:
+                setattr(source, attribute, moved[0])
+                setattr(target, attribute, moved[1])
         self._reload(keep_row=row)
 
     def delete_selected(self) -> None:
@@ -1453,8 +1507,18 @@ class EditorDialog(QDialog):
         if answer != QMessageBox.Yes:
             return
 
-        for heard_word, correct_word in pairs:
-            path = add_correction(heard_word, correct_word)
+        try:
+            for heard_word, correct_word in pairs:
+                path = add_correction(heard_word, correct_word)
+        except OSError as error:
+            log.exception("دیکشنری ذخیره نشد")
+            QMessageBox.warning(
+                self,
+                "دیکشنری",
+                f"ذخیره در دیکشنری ممکن نشد:\n{error}\n\n"
+                "اگر فایل دیکشنری جای دیگری باز است ببندش و دوباره بزن.",
+            )
+            return
 
         self._snapshot()
         applied = self._apply_to_all(dict(pairs))
@@ -1487,20 +1551,13 @@ class EditorDialog(QDialog):
     # --------------------------------------------------------------- export
 
     def to_cues(self) -> list[Cue]:
-        out: list[Cue] = []
-        for index, cue in enumerate(self.cues, start=1):
-            text = cue.text.strip()
-            if not text:
-                continue
-            out.append(
-                Cue(
-                    index=index,
-                    start=cue.start,
-                    end=cue.end,
-                    lines=wrap_lines(text, self.config.profile),
-                )
-            )
-        return out
+        """The lines as cues, timed by the same rules as a rendered style.
+
+        Writing the raw word times out left one-word lines on screen for a
+        fifth of a second, and a subtitle exported from here timed
+        differently from the very same lines rendered by the pipeline.
+        """
+        return cues_from_lines([(cue.words, cue.text) for cue in self.cues], self.config.profile)
 
     def export(self) -> None:
         from ..pipeline import output_path

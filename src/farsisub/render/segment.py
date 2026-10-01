@@ -12,9 +12,10 @@ lands, and a cut is never re-decided because a dot got removed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 from ..config import StyleProfile, TextRules
-from ..models import Cue, Word
+from ..models import Cue, Project, Word
 from ..text.normalize import apply_punctuation_rules, normalize_text
 from .breaks import ends_clause, ends_sentence as _ends_sentence
 from .breaks import COST_PLAIN, is_clitic, is_suffix, token_break_cost, word_break_cost
@@ -391,27 +392,41 @@ def wrap_lines(text: str, profile: StyleProfile) -> list[str]:
 KEYWORD_HOLD = 0.35
 
 
-def _timings(
-    words: list[Word], groups: list[WordGroup], profile: StyleProfile
+def timings_for_spans(
+    spans: Sequence[tuple[float, float, bool]], profile: StyleProfile
 ) -> list[tuple[float, float]]:
+    """On-screen times for cues, from (first word start, last word end, solo keyword).
+
+    Shared by the style renderer and by lines shaped in the editor, so both
+    get the same minimum duration, gap and keyword hold.
+    """
     times: list[tuple[float, float]] = []
     earliest_start = 0.0
 
-    for gi, g in enumerate(groups):
-        start = max(words[g.start].start, earliest_start)
-        end = max(words[g.end - 1].end, start + 0.2)
+    for index, (first, last, solo_keyword) in enumerate(spans):
+        start = max(first, earliest_start)
+        end = max(last, start + 0.2)
         if end - start < profile.min_duration:
             end = start + profile.min_duration
 
-        if gi + 1 < len(groups):
-            natural_next = words[groups[gi + 1].start].start
-            hold = KEYWORD_HOLD if g.solo_keyword else 0.0
+        if index + 1 < len(spans):
+            natural_next = spans[index + 1][0]
+            hold = KEYWORD_HOLD if solo_keyword else 0.0
             end = min(end, max(start + 0.2, natural_next + hold - profile.min_gap))
 
         times.append((start, end))
         earliest_start = end + profile.min_gap
 
     return times
+
+
+def _timings(
+    words: list[Word], groups: list[WordGroup], profile: StyleProfile
+) -> list[tuple[float, float]]:
+    return timings_for_spans(
+        [(words[g.start].start, words[g.end - 1].end, g.solo_keyword) for g in groups],
+        profile,
+    )
 
 
 def render_cues(
@@ -443,3 +458,42 @@ def render_cues(
 def build_cues(words: list[Word], profile: StyleProfile, rules: TextRules) -> list[Cue]:
     """One call from WordStream to finished cues."""
     return render_cues(words, group_words(words, profile), profile, rules)
+
+
+def cues_from_lines(
+    lines: Sequence[tuple[Sequence[Word], str]], profile: StyleProfile
+) -> list[Cue]:
+    """Cues for lines shaped by hand: the text as typed, the timing from the words.
+
+    The text is left exactly as the user wrote it -- no normalising, no
+    punctuation rules -- but it is wrapped, and timed by the same rules as a
+    rendered style, so a hand-edited subtitle does not flash one-word lines
+    for a fifth of a second.
+    """
+    kept = [(list(words), text.strip()) for words, text in lines if words and text.strip()]
+    spans = [
+        (
+            words[0].start,
+            words[-1].end,
+            profile.keyword_solo and len(words) == 1 and bool(words[0].keyword),
+        )
+        for words, _ in kept
+    ]
+    return [
+        Cue(index=index, start=start, end=end, lines=wrap_lines(text, profile))
+        for index, ((_, text), (start, end)) in enumerate(
+            zip(kept, timings_for_spans(spans, profile)), start=1
+        )
+    ]
+
+
+def project_cues(project: Project, profile: StyleProfile, rules: TextRules) -> list[Cue]:
+    """The cues a project stands for: its edited lines if it has any, else the style."""
+    if not project.lines:
+        return build_cues(project.words, profile, rules)
+    stream = project.words
+    lines = [
+        ([stream[i] for i in line.words if 0 <= i < len(stream)], line.text)
+        for line in project.lines
+    ]
+    return cues_from_lines(lines, profile)

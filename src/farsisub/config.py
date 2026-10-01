@@ -7,7 +7,7 @@ fields back as JSON so a user can build their own profile.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -130,7 +130,9 @@ DEFAULT_PROFILE = "smart"
 
 @dataclass
 class AppConfig:
-    profile: StyleProfile = field(default_factory=lambda: BUILTIN_PROFILES[DEFAULT_PROFILE])
+    # A copy: handing out the shared built-in meant any change to one config's
+    # profile silently changed the built-in for everyone.
+    profile: StyleProfile = field(default_factory=lambda: replace(BUILTIN_PROFILES[DEFAULT_PROFILE]))
     text: TextRules = field(default_factory=TextRules)
     keywords: KeywordRules = field(default_factory=KeywordRules)
     model_name: str = "large-v3"

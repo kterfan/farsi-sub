@@ -7,6 +7,7 @@
 ; keep its models and settings beside itself.
 
 #define AppName "FarsiSub"
+; Same number as __version__ in src/farsisub/__init__.py.
 #define AppVersion "1.5.2"
 #define AppPublisher "Erfan"
 #define AppExe "FarsiSub.exe"

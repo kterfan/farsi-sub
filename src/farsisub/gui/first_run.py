@@ -80,6 +80,7 @@ class FirstRunDialog(QDialog):
         self.resize(720, 520)
         self.thread: QThread | None = None
         self.worker: DownloadWorker | None = None
+        self.closing = False
         self._build()
 
     def _build(self) -> None:
@@ -209,6 +210,8 @@ class FirstRunDialog(QDialog):
         self.download_button.setEnabled(True)
         self.import_button.setEnabled(True)
         self.status.setText("")
+        if self.closing:
+            return  # the user walked away; the partial file resumes next time
         QMessageBox.warning(
             self,
             "دانلود انجام نشد",
@@ -230,10 +233,24 @@ class FirstRunDialog(QDialog):
         QMessageBox.information(self, "نصب شد", str(target))
         self.accept()
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+    def _stop_download(self) -> None:
+        self.closing = True
         if self.worker is not None:
             self.worker.cancel()
         if self.thread is not None:
             self.thread.quit()
             self.thread.wait(5000)
+
+    def reject(self) -> None:
+        """«بعداً» and Esc land here, not in closeEvent.
+
+        Only the window's X used to stop the download; the other two hid the
+        dialog and left it running unseen, its "installed" message popping
+        up later over a main window that did not know about the model.
+        """
+        self._stop_download()
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._stop_download()
         super().closeEvent(event)

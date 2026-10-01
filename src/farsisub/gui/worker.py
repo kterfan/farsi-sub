@@ -16,13 +16,12 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Signal
 
 from ..config import AppConfig
-from ..pipeline import PipelineError, process
+from ..engine import whispercpp
+from ..pipeline import Cancelled, PipelineError, process
 
 log = logging.getLogger(__name__)
 
-
-class Cancelled(RuntimeError):
-    """Raised inside the worker thread when the user presses cancel."""
+__all__ = ["Cancelled", "Job", "TranscribeWorker"]
 
 
 class TranscribeWorker(QObject):
@@ -32,6 +31,10 @@ class TranscribeWorker(QObject):
     log_line = Signal(str)
     finished = Signal(object, object)  # Project, output Path
     failed = Signal(str)
+    # A cancel is not a failure: the window stops the queue on this one
+    # instead of showing an error or moving on to the next file. Not called
+    # `cancelled`: that name is the property below.
+    stopped = Signal()
 
     def __init__(
         self,
@@ -51,7 +54,14 @@ class TranscribeWorker(QObject):
         self._cancelled = False
 
     def cancel(self) -> None:
+        """Called from the GUI thread. Stops the engine now, not at its next line.
+
+        The flag comes first: the killed process ends like a failed one, and
+        the flag is what tells the pipeline it was a cancel rather than a
+        reason to retry on the CPU.
+        """
         self._cancelled = True
+        whispercpp.stop_running()
 
     @property
     def cancelled(self) -> bool:
@@ -68,10 +78,11 @@ class TranscribeWorker(QObject):
                 suffix=self.suffix,
                 on_progress=self._on_progress,
                 on_log=self._on_log,
+                checkpoint=self._checkpoint,
             )
         except Cancelled:
             log.info("لغو شد: %s", self.video)
-            self.failed.emit("لغو شد")
+            self.stopped.emit()
         except PipelineError as error:
             log.warning("پردازش ناموفق: %s", error)
             self.failed.emit(str(error))
@@ -82,9 +93,12 @@ class TranscribeWorker(QObject):
             log.info("انجام شد: %s -> %s (%d کلمه)", self.video, output, len(project.words))
             self.finished.emit(project, output)
 
-    def _on_progress(self, percent: int) -> None:
+    def _checkpoint(self) -> None:
         if self._cancelled:
             raise Cancelled
+
+    def _on_progress(self, percent: int) -> None:
+        self._checkpoint()
         self.progress.emit(percent)
 
     def _on_log(self, message: str) -> None:
@@ -102,13 +116,21 @@ class Job:
         self.thread.started.connect(worker.run)
         worker.finished.connect(self.thread.quit)
         worker.failed.connect(self.thread.quit)
+        worker.stopped.connect(self.thread.quit)
 
     def start(self) -> None:
         self.thread.start()
 
-    def stop(self, timeout_ms: int = 30_000) -> None:
-        """Ask the worker to stop and wait for the thread to actually end."""
+    def stop(self, timeout_ms: int = 30_000) -> bool:
+        """Ask the worker to stop and wait for the thread to actually end.
+
+        True once the thread is gone. The engine is killed by `cancel`, so
+        the wait is normally a fraction of a second; the timeout only covers
+        a stage that has no checkpoint, such as decoding the audio.
+        """
         self.worker.cancel()
         self.thread.quit()
         if not self.thread.wait(timeout_ms):
             log.error("رشته پردازش در زمان تعیین‌شده تمام نشد")
+            return False
+        return True

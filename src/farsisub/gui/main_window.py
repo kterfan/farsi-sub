@@ -6,6 +6,7 @@ stay left-to-right because that is how they are actually read.
 
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from pathlib import Path
@@ -62,6 +63,11 @@ STATUS_QUEUED = "در صف"
 STATUS_RUNNING = "در حال پردازش"
 STATUS_DONE = "آماده"
 STATUS_FAILED = "خطا"
+STATUS_CANCELLED = "لغو شد"
+
+# What the start button picks up: a file that failed or was stopped is worth
+# another try when the user asks for one.
+STARTABLE = (STATUS_QUEUED, STATUS_FAILED, STATUS_CANCELLED)
 
 
 class AppMark(QWidget):
@@ -224,6 +230,9 @@ class MainWindow(QMainWindow):
         # Kept so the editor can reopen the last result without re-running.
         self.last_project = None
         self.running_path: Path | None = None
+        # Set by cancel: the queue stops after the current file instead of
+        # moving on to the next one.
+        self.stop_requested = False
 
         self.setWindowTitle("FarsiSub — زیرنویس فارسی")
         self.setLayoutDirection(Qt.RightToLeft)
@@ -506,7 +515,7 @@ class MainWindow(QMainWindow):
             # A Latin name inside a right-to-left table gets reordered by the
             # bidi algorithm -- "5.wav" came out as "wav.5". The isolate marks
             # pin it down.
-            name_item = QTableWidgetItem(f"⁦{path.name}⁩")
+            name_item = QTableWidgetItem(f"\u2066{path.name}\u2069")  # LRI ... PDI
             # File names are usually Latin: pin them to the visual left even
             # though the window itself is right-to-left.
             name_item.setTextAlignment(Qt.AlignLeft | Qt.AlignAbsolute | Qt.AlignVCenter)
@@ -619,7 +628,7 @@ class MainWindow(QMainWindow):
     def _update_buttons(self) -> None:
         idle = self.job is None
         pending = any(
-            self.table.item(row, 1).text() in (STATUS_QUEUED, STATUS_FAILED)
+            self.table.item(row, 1).text() in STARTABLE
             for row in range(self.table.rowCount())
         )
         self.start_button.setEnabled(idle and pending and bool(locate.installed_models()))
@@ -657,17 +666,37 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- queue
 
-    def start_queue(self) -> None:
-        if self.job is not None:
-            return
-        pending = [
+    def _pending(self, statuses: tuple[str, ...]) -> list[Path]:
+        return [
             path
             for i, path in enumerate(self.queue)
-            if self.table.item(i, 1).text() in (STATUS_QUEUED, STATUS_FAILED)
+            if self.table.item(i, 1).text() in statuses
         ]
-        if not pending:
+
+    def start_queue(self) -> None:
+        """The start button: everything waiting, plus what failed or was stopped."""
+        if self.job is not None:
             return
-        self._run(pending[0])
+        self.stop_requested = False
+        pending = self._pending(STARTABLE)
+        if pending:
+            self._run(pending[0])
+
+    def _continue_queue(self) -> None:
+        """After a file ends: only files still waiting, never a retry.
+
+        Picking failed files up here too meant a cancelled file started over
+        straight away, and a file that always fails (no audio track, a broken
+        container) ran again and again, an error box each time.
+        """
+        if self.stop_requested:
+            self.stop_requested = False
+            return
+        if self.job is not None:
+            return
+        pending = self._pending((STATUS_QUEUED,))
+        if pending:
+            self._run(pending[0])
 
     def _run(self, path: Path) -> None:
         self.started_at = time.time()
@@ -679,7 +708,9 @@ class MainWindow(QMainWindow):
         # thread, and need it.
         self.running_path = path
 
-        worker = TranscribeWorker(path, self.config)
+        # A copy: the worker reads the settings on its own thread for minutes,
+        # and a switch flipped meanwhile must not land halfway through a file.
+        worker = TranscribeWorker(path, copy.deepcopy(self.config))
         # Bound methods with `self` as receiver, and QueuedConnection spelled
         # out. A lambda here has no receiver object, so Qt runs it on the
         # WORKER thread -- and touching a widget from there crashes the process
@@ -687,6 +718,7 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._on_progress, Qt.QueuedConnection)
         worker.finished.connect(self._on_finished, Qt.QueuedConnection)
         worker.failed.connect(self._on_failed, Qt.QueuedConnection)
+        worker.stopped.connect(self._on_cancelled, Qt.QueuedConnection)
 
         job = Job(worker)
         # Clean-up and the next queue item wait for the THREAD, not the worker.
@@ -722,8 +754,14 @@ class MainWindow(QMainWindow):
         if path is not None:
             self._set_status(path, STATUS_FAILED)
         self.status_label.setText("خطا")
-        if message != "لغو شد":
-            QMessageBox.warning(self, "پردازش انجام نشد", message)
+        QMessageBox.warning(self, "پردازش انجام نشد", message)
+
+    def _on_cancelled(self) -> None:
+        path = self.running_path
+        if path is not None:
+            self._set_status(path, STATUS_CANCELLED)
+        self.progress.setValue(0)
+        self.status_label.setText("لغو شد")
 
     def _job_finished(self) -> None:
         # `finished` fires as the thread is winding down, not once it is gone.
@@ -734,18 +772,22 @@ class MainWindow(QMainWindow):
         if job is not None:
             job.thread.wait(10_000)
         self._update_buttons()
-        self.start_queue()  # move on to the next file in the queue
+        self._continue_queue()
 
     def cancel(self) -> None:
         if self.job is not None:
+            self.stop_requested = True
             self.job.worker.cancel()
             self.status_label.setText("در حال لغو…")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         """Never let the window die while a worker thread is still alive."""
         if self.job is not None:
-            self.job.stop()
-            self.job = None
+            self.stop_requested = True
+            if self.job.stop():
+                self.job = None
+            # Otherwise the reference is kept: dropping a QThread that is
+            # still running takes the process down with it.
         super().closeEvent(event)
 
     def refresh_models(self) -> None:
@@ -798,7 +840,8 @@ class MainWindow(QMainWindow):
         if saved.exists():
             try:
                 return Project.load(saved)
-            except Exception:
+            except Exception:  # noqa: BLE001 - reported to the user by the caller
+                log.exception("پروژه خوانده نشد: %s", saved)
                 return None
         return None
 
@@ -814,7 +857,17 @@ class MainWindow(QMainWindow):
             row = min(rows) if rows else None
         if row is not None and row < len(self.queue):
             project = self._project_for(self.queue[row])
-        if project is None:
+            if project is None:
+                # Falling back to the last result here opened a different
+                # video's subtitle under this file's name.
+                QMessageBox.information(
+                    self,
+                    "ویرایش",
+                    f"برای «{self.queue[row].name}» هنوز زیرنویسی ساخته نشده "
+                    "(یا فایل پروژه‌اش خوانده نشد). اول همین فایل را پردازش کن.",
+                )
+                return
+        else:
             project = self.last_project
         if project is None:
             QMessageBox.information(
