@@ -61,6 +61,7 @@ from .editor_tools import (
     WaveformStrip,
     move_edge,
     replace_in_cues,
+    replace_in_text,
 )
 
 COL_START, COL_END, COL_DURATION, COL_CPS, COL_TEXT = range(5)
@@ -1779,13 +1780,12 @@ class EditorDialog(QDialog):
         FindReplaceDialog(self.replace_everywhere, self).exec()
 
     def replace_everywhere(self, find: str, replacement: str, whole: bool, teach: bool) -> int:
+        # Counted first: a search that finds nothing must not leave a
+        # snapshot behind, which would mark the lines as shaped by hand.
+        if not any(replace_in_text(c.text, find, replacement, whole)[1] for c in self.cues):
+            return 0
         self._snapshot()
         count = replace_in_cues(self.cues, find, replacement, whole)
-        if not count:
-            self.history.pop()
-            self._times_history.pop()
-            self._update_history_buttons()
-            return 0
         if teach and " " not in find:
             try:
                 add_correction(find, replacement)
@@ -1829,11 +1829,18 @@ class EditorDialog(QDialog):
         for signal in (worker.finished, worker.failed, worker.stopped):
             signal.connect(thread.quit)
         thread.finished.connect(self._burn_thread_ended, Qt.QueuedConnection)
-        progress.canceled.connect(worker.cancel)
+        # Through a slot of this dialog, on the GUI thread: connected to the
+        # worker itself the request would queue behind the burn it is meant
+        # to stop, and never arrive.
+        progress.canceled.connect(self._cancel_burn)
         self._burn_worker, self._burn_progress = worker, progress
         self.burn_thread = thread
         self.burn_button.setEnabled(False)
         thread.start()
+
+    def _cancel_burn(self) -> None:
+        if self.burn_thread is not None:
+            self._burn_worker.cancel()
 
     def _burn_done(self, path: str) -> None:
         self._burn_progress.reset()

@@ -204,7 +204,10 @@ def burn(
     partial = final.with_name(final.stem + ".part" + final.suffix)
     ordered = sorted(cues, key=lambda c: c.start)
     starts = [c.start for c in ordered]
-    overlays: dict[int, Overlay | None] = {}
+    # Only the line on screen is kept drawn: frames come in time order, and a
+    # cache of every line held gigabytes on a long word-by-word video.
+    shown_index = -1
+    shown: Overlay | None = None
 
     try:
         with av.open(str(source)) as src:
@@ -258,10 +261,11 @@ def burn(
                         seconds = float(frame.time) if frame.time is not None else 0.0
                         index = _cue_at(ordered, starts, seconds)
                         if index >= 0:
-                            if index not in overlays:
-                                overlays[index] = render_overlay(ordered[index], style, width, height)
-                            if overlays[index] is not None:
-                                pixels = blend(np.array(pixels, copy=True), overlays[index])
+                            if index != shown_index:
+                                shown_index = index
+                                shown = render_overlay(ordered[index], style, width, height)
+                            if shown is not None:
+                                pixels = blend(np.array(pixels, copy=True), shown)
                         out = av.VideoFrame.from_ndarray(pixels, format="rgb24")
                         out.pts = frame.pts
                         out.time_base = frame.time_base

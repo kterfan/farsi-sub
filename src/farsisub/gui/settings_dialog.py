@@ -246,7 +246,9 @@ class SettingsDialog(QDialog):
     def apply_to(self, config: AppConfig) -> None:
         profile = self.profile()
         config.custom_profile = profile
-        if self.use_custom_box.isChecked():
+        # The style in use is updated too when it is this one, checked or
+        # not: otherwise the new numbers waited for the next start.
+        if self.use_custom_box.isChecked() or config.profile.name == CUSTOM_PROFILE:
             config.profile = replace(profile)
         config.keywords.sensitivity = self.sensitivity.value() / 100
         config.ass_style = self.look()

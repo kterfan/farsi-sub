@@ -388,3 +388,55 @@ def test_settings_dialog_builds_a_custom_style():
     assert config.profile.max_duration >= config.profile.min_duration
     assert config.keywords.sensitivity == 0.8
     assert config.ass_style.size == 90
+
+
+def test_a_search_that_finds_nothing_leaves_the_lines_to_the_style():
+    dialog = _editor("یک دو سه")
+    assert dialog.replace_everywhere("نیست", "هست", True, False) == 0
+    assert dialog.shaped is False and dialog.history == []
+
+
+def test_saving_the_active_custom_style_applies_it_now():
+    from farsisub.gui.settings_dialog import SettingsDialog
+
+    _qt()
+    config = AppConfig()
+    config.custom_profile = replace(BUILTIN_PROFILES["smart"], name="custom", label="من")
+    config.profile = replace(config.custom_profile)
+    dialog = SettingsDialog(config)
+    dialog.use_custom_box.setChecked(False)
+    dialog.chars_spin.setValue(33)
+    dialog.apply_to(config)
+    assert config.profile.max_chars_per_line == 33
+
+
+def test_cancelling_a_burn_from_the_progress_window_stops_it():
+    import time
+
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from farsisub.gui.editor import EditorDialog
+
+    _qt()
+    with tempfile.TemporaryDirectory() as folder, _TempData():
+        video = _sample_video(Path(folder) / "clip.mp4", seconds=8.0)
+        stream = [Word(text=t, start=i * 0.5, end=i * 0.5 + 0.4) for i, t in enumerate("یک دو سه چهار".split())]
+        config = AppConfig()
+        config.output_dir = folder
+        dialog = EditorDialog(Project(video_path=str(video), words=stream), config)
+        shown = []
+        original = QMessageBox.information
+        QMessageBox.information = staticmethod(lambda *a, **k: shown.append(a))
+        try:
+            dialog.burn_video()
+            dialog._burn_progress.canceled.emit()  # what the Cancel button sends
+            deadline = time.monotonic() + 30
+            while dialog.burn_thread is not None and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.01)
+        finally:
+            QMessageBox.information = original
+        assert dialog.burn_thread is None, "the burn never ended"
+        assert not shown, "a cancelled burn reported a finished video"
+        assert not list(Path(folder).glob("*.subtitled*"))
+        dialog.close()
