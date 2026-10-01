@@ -370,7 +370,10 @@ def test_models_are_found_in_extra_folders(tmp_path=None):
             found = locate.installed_models()
             assert "large-v3" in found
             assert "my-tune" in found
-            assert locate.model_path("my-tune") == Path(shared) / "ggml-my-tune.bin"
+            # Resolved on both sides: a Windows temp folder can come as an 8.3
+            # short name ("RUNNER~1") that the registered folder spells out.
+            found_path = locate.model_path("my-tune")
+            assert found_path.resolve() == (Path(shared) / "ggml-my-tune.bin").resolve()
         finally:
             if previous is None:
                 os.environ.pop("FARSISUB_DATA", None)
