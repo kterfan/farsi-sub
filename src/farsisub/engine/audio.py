@@ -24,6 +24,35 @@ class AudioError(RuntimeError):
     pass
 
 
+def decode_tolerant(container, stream, checkpoint: Callable[[], None] | None = None):
+    """Frames of one stream, skipping packets the decoder rejects.
+
+    Downloaded and phone-recorded files often carry a few broken packets.
+    Players step over them; PyAV raised on the first one ("Invalid data found
+    when processing input") and the whole file failed. A stream where nothing
+    at all decodes is still an error.
+    """
+    import logging
+
+    import av
+
+    good = bad = 0
+    for packet in container.demux(stream):
+        if checkpoint:
+            checkpoint()
+        try:
+            frames = packet.decode()
+        except av.FFmpegError:
+            bad += 1
+            continue
+        good += 1
+        yield from frames
+    if bad:
+        logging.getLogger(__name__).warning("%d بسته خراب در %s رد شد", bad, stream.type)
+    if bad and not good:
+        raise AudioError("هیچ بخشی از این ترک خوانده نشد؛ فایل احتمالاً خراب است")
+
+
 @dataclass
 class MediaInfo:
     has_audio: bool
@@ -90,9 +119,7 @@ def extract_wav(
             resampler = av.audio.resampler.AudioResampler(
                 format="s16", layout="mono", rate=sample_rate
             )
-            for frame in container.decode(stream):
-                if checkpoint:
-                    checkpoint()
+            for frame in decode_tolerant(container, stream, checkpoint):
                 for resampled in resampler.resample(frame):
                     resampled.pts = None
                     for packet in out_stream.encode(resampled):
@@ -142,9 +169,7 @@ def energy_envelope(
                     bins.extend(np.sqrt((block**2).mean(axis=1)).tolist())
                     carry = carry[usable:]
 
-        for frame in container.decode(stream):
-            if checkpoint:
-                checkpoint()
+        for frame in decode_tolerant(container, stream, checkpoint):
             take(resampler.resample(frame))
         take(resampler.resample(None))  # the tail the resampler held back
 

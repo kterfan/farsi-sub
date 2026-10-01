@@ -250,7 +250,17 @@ def transcribe(
 
     with tempfile.TemporaryDirectory(prefix="farsisub-") as tmp:
         # whisper-cli reads flac/mp3/ogg/wav only, never a video container.
-        wav = audio_module.extract_wav(video_path, Path(tmp) / "audio.wav", checkpoint=checkpoint)
+        try:
+            wav = audio_module.extract_wav(
+                video_path, Path(tmp) / "audio.wav", checkpoint=checkpoint
+            )
+        except audio_module.AudioError as error:
+            raise PipelineError(f"صدای «{video_path.name}» خوانده نشد: {error}") from error
+        except Exception as error:  # noqa: BLE001 - FFmpeg's own errors, in Persian
+            raise PipelineError(
+                f"صدای «{video_path.name}» خوانده نشد؛ فایل خراب است یا قالبش پشتیبانی نمی‌شود "
+                f"({error})"
+            ) from error
         _check(checkpoint)
         out_prefix = Path(tmp) / video_path.stem
         two_passes = bool(config.merge_model and config.merge_model != config.model_name)

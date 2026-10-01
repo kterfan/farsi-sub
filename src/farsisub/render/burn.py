@@ -244,7 +244,11 @@ def burn(
                 for packet in src.demux(*streams):
                     if checkpoint:
                         checkpoint()
-                    for frame in packet.decode():
+                    try:
+                        frames = packet.decode()
+                    except av.FFmpegError:
+                        continue  # a broken packet: players skip it, so do we
+                    for frame in frames:
                         if packet.stream is ain:
                             for resampled in resampler.resample(frame):
                                 resampled.pts = None

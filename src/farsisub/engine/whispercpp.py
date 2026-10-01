@@ -178,7 +178,7 @@ def words_from_json(data: dict, *, offset_ms: float = 0.0) -> list[Word]:
 
     def flush() -> None:
         nonlocal pending_text, pending_start, pending_end, pending_p
-        text = pending_text.strip()
+        text = _whole_text(pending_text).strip()
         if text and pending_start is not None and pending_end is not None:
             words.append(
                 Word(
@@ -223,9 +223,23 @@ def words_from_json(data: dict, *, offset_ms: float = 0.0) -> list[Word]:
     return _close_gaps(words)
 
 
+def _whole_text(text: str) -> str:
+    """Rejoin bytes that whisper.cpp split between tokens.
+
+    Tokens are byte pieces: a two-byte Persian letter can end one token and
+    finish in the next, and the JSON file then holds half a character.
+    Read with surrogateescape those halves survive as placeholders; once the
+    tokens of a word are joined they form the letter again. Anything still
+    broken becomes U+FFFD instead of failing the whole file.
+    """
+    return text.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+
+
 def load_words(json_path: str | Path, *, offset_ms: float = 0.0) -> list[Word]:
-    data = json.loads(Path(json_path).read_text(encoding="utf-8"))
-    return words_from_json(data, offset_ms=offset_ms)
+    # Not read_text(encoding="utf-8"): one letter split across two tokens made
+    # the strict decode fail and lost a whole transcription.
+    raw = Path(json_path).read_bytes().decode("utf-8", "surrogateescape")
+    return words_from_json(json.loads(raw), offset_ms=offset_ms)
 
 
 def parse_progress(line: str) -> int | None:

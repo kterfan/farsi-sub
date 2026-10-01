@@ -443,3 +443,61 @@ def test_cancelling_a_burn_from_the_progress_window_stops_it():
         assert not shown, "a cancelled burn reported a finished video"
         assert not list(Path(folder).glob("*.subtitled*"))
         dialog.close()
+
+
+# ------------------------------------------------------------ broken inputs
+
+
+def test_a_letter_split_between_tokens_does_not_break_the_transcript():
+    # whisper.cpp's tokens are byte pieces; "ا" (two bytes) ended one token
+    # and finished in the next, and the strict UTF-8 read of its JSON failed:
+    # "'utf-8' codec can't decode byte ... invalid continuation byte".
+    from farsisub.engine.whispercpp import load_words
+
+    data = "سلام".encode()
+    first, second = b" " + data[:5], data[5:]
+    document = (
+        b'{"transcription":[{"offsets":{"from":0,"to":1000},"tokens":['
+        b'{"text":"' + first + b'","offsets":{"from":0,"to":400},"p":0.9},'
+        b'{"text":"' + second + b'","offsets":{"from":400,"to":900},"p":0.8}]}]}'
+    )
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "out.json"
+        path.write_bytes(document)
+        words = load_words(path)
+    assert [w.text for w in words] == ["سلام"]
+
+
+def _with_broken_audio(source: Path, target: Path, broken=(5, 6, 15)) -> Path:
+    import av
+
+    with av.open(str(source)) as inp, av.open(str(target), "w", format="mp4") as out:
+        stream = inp.streams.audio[0]
+        copy = out.add_stream_from_template(stream)
+        for index, packet in enumerate(inp.demux(stream)):
+            if packet.dts is None:
+                continue
+            if index in broken:
+                junk = av.Packet(os.urandom(packet.size))
+                junk.pts, junk.dts, junk.time_base = packet.pts, packet.dts, packet.time_base
+                packet = junk
+            packet.stream = copy
+            out.mux(packet)
+    return target
+
+
+def test_broken_audio_packets_are_skipped_not_fatal():
+    # "Invalid data found when processing input: avcodec_send_packet()" on a
+    # real user's video: one bad packet stopped the whole transcription.
+    import av
+
+    from farsisub.engine import audio
+
+    with tempfile.TemporaryDirectory() as folder:
+        clean = _sample_video(Path(folder) / "clean.mp4")
+        broken = _with_broken_audio(clean, Path(folder) / "broken.mp4")
+        wav = audio.extract_wav(broken, Path(folder) / "out.wav")
+        with av.open(str(wav)) as result:
+            seconds = sum(f.samples for f in result.decode(result.streams.audio[0])) / 16000
+        assert seconds > 1.5
+        assert len(audio.energy_envelope(wav)) > 150

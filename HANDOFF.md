@@ -7,13 +7,13 @@
 ```
 نسخه نصب‌شده : %LOCALAPPDATA%\Programs\FarsiSub\FarsiSub.exe
 از سورس       : C:\Users\Erfan\projects\farsi-sub\FarsiSub.bat
-تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۴۶ تست)
+تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۴۸ تست)
 بیلد          : .venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
 بررسی بسته    : .venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
 نصاب          : "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
 ```
 
-نسخه فعلی: **۱.۶.۰** — `dist\FarsiSub-1.6.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
+نسخه فعلی: **۱.۶.۱** — `dist\FarsiSub-1.6.1-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
 
 ## انتشار نسخه تازه
 
