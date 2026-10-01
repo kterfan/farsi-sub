@@ -15,7 +15,11 @@
 
 نسخه فعلی: **۱.۶.۰** — `dist\FarsiSub-1.6.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
 
-## انتشار نسخه تازه (روی ویندوز)
+## انتشار نسخه تازه
+
+**خودکار (پیشنهادی):** هر push به شاخه‌های `claude/**` یا `main` در گیت‌هاب (Actions → «Windows installer») نصاب را می‌سازد؛ فایل در بخش Artifacts همان اجراست. push یک tag مثل `v1.6.0` همین کار را می‌کند و یک Release هم می‌سازد. فایل: `.github/workflows/build-windows.yml`. نسخه موتور در همان فایل ثابت شده (`ENGINE_VERSION`، الان v1.8.2): آخرین ریلیز whisper.cpp (v1.9.4) فایل CUDA ویندوز ندارد.
+
+**دستی، روی ویندوز:**
 
 ```
 git pull                                                   (شاخه نسخه)

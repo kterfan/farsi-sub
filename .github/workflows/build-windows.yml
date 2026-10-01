@@ -1,0 +1,86 @@
+# Builds the Windows installer on a GitHub-hosted Windows machine.
+#
+#   push to the working branch or main  -> installer as a downloadable artifact
+#   push a tag such as v1.6.0           -> the same, plus a GitHub Release
+#
+# Nothing large lives in the repository: the engine, the VAD model and the
+# font are fetched here, the same way tools/bootstrap.py does on a dev machine.
+
+name: Windows installer
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+
+permissions:
+  contents: write  # only used to publish a Release from a tag
+
+env:
+  # Pinned: the newest whisper.cpp release has no Windows CUDA archive, and
+  # the -dtw / -nfa behaviour the app depends on was measured on this line.
+  ENGINE_VERSION: v1.8.2
+  VAZIRMATN_VERSION: v33.003
+  PYTHONUTF8: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # hazm 0.12.1 needs 3.12 or newer
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Fetch the engine (whisper.cpp + VAD model)
+        run: python tools/bootstrap.py --flavour cuda --skip-model --version $env:ENGINE_VERSION
+
+      - name: Fetch the Vazirmatn font
+        shell: pwsh
+        run: |
+          $zip = "vazirmatn.zip"
+          Invoke-WebRequest "https://github.com/rastikerdar/vazirmatn/releases/download/$env:VAZIRMATN_VERSION/vazirmatn-$env:VAZIRMATN_VERSION.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath vazirmatn
+          New-Item -ItemType Directory -Force assets/fonts | Out-Null
+          Copy-Item vazirmatn/fonts/ttf/Vazirmatn-*.ttf -Destination assets/fonts
+          Get-ChildItem assets/fonts
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tests/run_tests.py
+
+      - name: Build with PyInstaller
+        run: python -m PyInstaller installer/farsisub.spec --noconfirm --distpath dist --workpath build/pyi
+
+      - name: Check the bundle
+        run: python installer/verify_build.py dist/FarsiSub
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\farsisub.iss
+          Get-ChildItem dist -Filter "*Setup.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FarsiSub-installer
+          path: dist/FarsiSub-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FarsiSub-*-Setup.exe
+          body_path: CHANGELOG.md

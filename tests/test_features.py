@@ -160,7 +160,10 @@ def _sample_video(path: Path, seconds: float = 2.0, size=(640, 360), audio: bool
     import numpy as np
 
     with av.open(str(path), "w") as out:
-        video = out.add_stream("libx264", rate=25)
+        try:
+            video = out.add_stream("libx264", rate=25)
+        except Exception:  # an FFmpeg build without x264
+            video = out.add_stream("mpeg4", rate=25)
         video.width, video.height, video.pix_fmt = size[0], size[1], "yuv420p"
         sound = out.add_stream("aac", rate=44100, layout="stereo") if audio else None
         for i in range(int(seconds * 25)):
