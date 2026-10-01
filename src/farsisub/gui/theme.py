@@ -228,7 +228,8 @@ def stylesheet(palette: Palette) -> str:
     QPushButton:focus {{ border: 1px solid {p.focus_ring}; }}
     QPushButton:disabled {{ color: {p.text_muted}; background: {p.surface}; }}
     QPushButton#Primary {{
-        background: {p.accent};
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                    stop:0 {p.accent}, stop:1 #8B5CF6);
         color: {p.accent_text};
         border: 1px solid {p.accent};
         font-size: {FONT_TITLE}pt;
@@ -237,7 +238,8 @@ def stylesheet(palette: Palette) -> str:
         min-height: {ROW_HEIGHT - 6}px;
     }}
     QPushButton#Primary:hover {{
-        background: {p.accent_hover};
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                    stop:0 {p.accent_hover}, stop:1 #9D74F8);
         border-color: {p.accent_hover};
     }}
     QPushButton#Primary:disabled {{
@@ -373,7 +375,16 @@ def stylesheet(palette: Palette) -> str:
         text-align: center;
         color: transparent;
     }}
-    QProgressBar::chunk {{ background: {p.accent}; border-radius: 3px; }}
+    QProgressBar::chunk {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {p.accent}, stop:1 #8B5CF6);
+        border-radius: 3px;
+    }}
+    /* The bar inside a queue row: tall enough to carry its percentage. */
+    QProgressBar#RowProgress {{
+        background: {p.border};
+        margin: 15px 12px;
+        border-radius: 3px;
+    }}
 
     /* Idle it is just the card; the dashed outline is feedback for a drag
        in flight, not permanent decoration. */

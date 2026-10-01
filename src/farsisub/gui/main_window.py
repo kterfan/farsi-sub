@@ -11,7 +11,7 @@ import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTime, QUrl
+from PySide6.QtCore import QPointF, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import brand
 from ..config import BUILTIN_PROFILES, OUTPUT_FORMATS, AppConfig, save_settings
 from ..engine import locate, modelstore
 from . import theme
@@ -52,6 +53,19 @@ MEDIA_FILTER = (
     "صدا (" + " ".join(f"*{s}" for s in sorted(AUDIO_SUFFIXES)) + ");;"
     "همه فایل‌ها (*)"
 )
+
+
+def format_duration(seconds: float) -> str:
+    """"۰۵:۰۷" or "۱:۰۵:۰۷", in Persian digits.
+
+    QTime's mm:ss wrapped after an hour -- a 65-minute estimate read "05:00"
+    -- and raised on a huge first estimate.
+    """
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    text = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+    return to_persian_digits(text)
 
 
 def media_paths(urls) -> list[Path]:
@@ -83,26 +97,11 @@ class AppMark(QWidget):
         self.setFixedSize(size, size)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        from PySide6.QtGui import QColor, QPainter, QPainterPath
+        from PySide6.QtGui import QPainter
 
+        # The same mark as the icon, the installer and the tray: one drawing.
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        box = self.rect().adjusted(0, 0, -1, -1)
-
-        tile = QPainterPath()
-        tile.addRoundedRect(box, theme.RADIUS, theme.RADIUS)
-        painter.fillPath(tile, QColor(theme.active.accent))
-
-        # Two subtitle lines, the shorter one centred underneath.
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(theme.active.accent_text))
-        unit = self._size / 10
-        painter.drawRoundedRect(
-            QRectF(unit * 2, unit * 5.4, unit * 6, unit * 0.9), unit * 0.45, unit * 0.45
-        )
-        painter.drawRoundedRect(
-            QRectF(unit * 3.2, unit * 7.1, unit * 3.6, unit * 0.9), unit * 0.45, unit * 0.45
-        )
+        brand.paint_logo(painter, self._size)
         painter.end()
 
 
@@ -233,6 +232,9 @@ class MainWindow(QMainWindow):
         # Set by cancel: the queue stops after the current file instead of
         # moving on to the next one.
         self.stop_requested = False
+        # The icon beside the clock, set by the app once the window exists.
+        self.tray = None
+        self.done_in_run = 0
 
         self.setWindowTitle("FarsiSub — زیرنویس فارسی")
         self.setLayoutDirection(Qt.RightToLeft)
@@ -255,6 +257,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._options())
         layout.addWidget(self._work_surface(), stretch=1)
         layout.addWidget(self._footer())
+        layout.addWidget(self._credit())
 
         self.setCentralWidget(root)
         self._shortcuts()
@@ -291,10 +294,10 @@ class MainWindow(QMainWindow):
             if locate.has_cuda()
             else "پردازش روی CPU انجام می‌شود — کندتر ولی روی هر سیستمی کار می‌کند"
         )
-        row.addWidget(self.hardware_label)
+        row.addWidget(self.hardware_label, 0, Qt.AlignVCenter)
         self.engine_label = QLabel()
         self.engine_label.setObjectName("Chip")
-        row.addWidget(self.engine_label)
+        row.addWidget(self.engine_label, 0, Qt.AlignVCenter)
 
         self.theme_button = QPushButton()
         self.theme_button.setObjectName("Quiet")
@@ -308,7 +311,34 @@ class MainWindow(QMainWindow):
         self.settings_button.setToolTip("طول خط، زمان نمایش، حساسیت کلمه کلیدی، ظاهر زیرنویس")
         self.settings_button.clicked.connect(self.open_settings)
         row.addWidget(self.settings_button)
+
+        self.about_button = QPushButton("درباره")
+        self.about_button.setObjectName("Quiet")
+        self.about_button.clicked.connect(self.open_about)
+        row.addWidget(self.about_button)
         return box
+
+    def _credit(self) -> QLabel:
+        """Who made it, quietly, under everything else."""
+        label = QLabel(
+            f"ساخته‌ی {brand.AUTHOR_FA} · {brand.AUTHOR_EN} · "
+            f'<a href="{brand.REPO_URL}" style="color:inherit">{brand.REPO_LABEL}</a>'
+        )
+        label.setObjectName("Muted")
+        label.setOpenExternalLinks(True)
+        label.setAlignment(Qt.AlignCenter)
+        self.credit_label = label
+        return label
+
+    def open_about(self) -> None:
+        from .about_dialog import AboutDialog
+
+        AboutDialog(self).exec()
+
+    def bring_to_front(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _options(self) -> QWidget:
         card = QFrame()
@@ -423,7 +453,10 @@ class MainWindow(QMainWindow):
         self.table.itemDoubleClicked.connect(self._row_double_clicked)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        # Fixed: the progress bar of the running file needs the room, and a
+        # column that resized to its text squeezed it to a dot.
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.table.setColumnWidth(1, 170)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         return self.table
 
@@ -739,6 +772,11 @@ class MainWindow(QMainWindow):
         """Colour carries the state, so the column can be read at a glance."""
         from PySide6.QtGui import QBrush, QColor
 
+        if item.text() == STATUS_RUNNING:
+            # The row's progress bar sits on top; the words must not show
+            # through around it.
+            item.setForeground(QBrush(QColor(0, 0, 0, 0)))
+            return
         token = self.STATUS_COLOURS.get(item.text(), "text_muted")
         item.setForeground(QBrush(QColor(getattr(theme.active, token))))
 
@@ -749,6 +787,25 @@ class MainWindow(QMainWindow):
         self._paint_status(item)
         if output:
             self.table.item(row, 2).setText(output)
+        if status == STATUS_RUNNING:
+            # The row itself shows how far it got, so a long queue reads at
+            # a glance. The status text stays underneath for the queue logic.
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)  # the label squeezed the bar to a dot
+            bar.setObjectName("RowProgress")
+            bar.setLayoutDirection(Qt.LeftToRight)
+            self.table.setCellWidget(row, 1, bar)
+        else:
+            self.table.removeCellWidget(row, 1)
+
+    def _row_progress(self, percent: int) -> None:
+        if self.running_path is None or self.running_path not in self.queue:
+            return
+        bar = self.table.cellWidget(self._row_for(self.running_path), 1)
+        if isinstance(bar, QProgressBar):
+            bar.setValue(percent)
+            bar.setToolTip(to_persian_digits(f"{percent}٪"))
 
     # ---------------------------------------------------------------- queue
 
@@ -766,6 +823,7 @@ class MainWindow(QMainWindow):
         self.stop_requested = False
         pending = self._pending(STARTABLE)
         if pending:
+            self.done_in_run = 0
             self._run(pending[0])
 
     def _continue_queue(self) -> None:
@@ -783,6 +841,8 @@ class MainWindow(QMainWindow):
         pending = self._pending((STATUS_QUEUED,))
         if pending:
             self._run(pending[0])
+        elif self.tray is not None and self.done_in_run > 1:
+            self.tray.queue_done(self.done_in_run)
 
     def _run(self, path: Path) -> None:
         self.started_at = time.time()
@@ -815,12 +875,13 @@ class MainWindow(QMainWindow):
 
     def _on_progress(self, percent: int) -> None:
         self.progress.setValue(percent)
+        self._row_progress(percent)
+        if self.tray is not None and self.running_path is not None:
+            self.tray.working(self.running_path.name, percent)
         if percent > 2:
             elapsed = time.time() - self.started_at
             remaining = elapsed * (100 - percent) / percent
-            self.status_label.setText(
-                "باقی‌مانده حدود " + QTime(0, 0).addSecs(int(remaining)).toString("mm:ss")
-            )
+            self.status_label.setText("باقی‌مانده حدود " + format_duration(remaining))
 
     def _on_finished(self, project, output) -> None:
         """Runs on the GUI thread, after the worker signals success."""
@@ -834,12 +895,17 @@ class MainWindow(QMainWindow):
         self.edit_button.setEnabled(True)
         self.status_label.setText("انجام شد")
         self.progress.setValue(100)
+        self.done_in_run += 1
+        if self.tray is not None and path is not None:
+            self.tray.finished(path.name, output.name)
 
     def _on_failed(self, message: str) -> None:
         path = self.running_path
         if path is not None:
             self._set_status(path, STATUS_FAILED)
         self.status_label.setText("خطا")
+        if self.tray is not None and path is not None:
+            self.tray.failed(path.name, message)
         QMessageBox.warning(self, "پردازش انجام نشد", message)
 
     def _on_cancelled(self) -> None:
@@ -848,6 +914,8 @@ class MainWindow(QMainWindow):
             self._set_status(path, STATUS_CANCELLED)
         self.progress.setValue(0)
         self.status_label.setText("لغو شد")
+        if self.tray is not None and path is not None:
+            self.tray.cancelled(path.name)
 
     def _job_finished(self) -> None:
         # `finished` fires as the thread is winding down, not once it is gone.
@@ -869,6 +937,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         """Never let the window die while a worker thread is still alive."""
         self.save_settings()
+        if self.tray is not None:
+            self.tray.hide()  # or Windows leaves a ghost icon by the clock
         if self.job is not None:
             self.stop_requested = True
             if self.job.stop():
