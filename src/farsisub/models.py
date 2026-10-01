@@ -92,6 +92,32 @@ class Cue:
 
 
 @dataclass
+class EditedLine:
+    """One line exactly as the user left it in the editor.
+
+    The word indices are what tie it back to the stream: the timing still
+    comes from the words, so a saved line cannot drift away from the audio.
+    An empty list would mean a line with no sound behind it, which the editor
+    never produces.
+    """
+
+    words: list[int] = field(default_factory=list)
+    text: str = ""
+    edited: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"words": self.words, "text": self.text, "edited": self.edited}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "EditedLine":
+        return cls(
+            words=[int(i) for i in d.get("words", [])],
+            text=d.get("text", ""),
+            edited=bool(d.get("edited", False)),
+        )
+
+
+@dataclass
 class Project:
     """Everything needed to re-render subtitles without touching the video again."""
 
@@ -101,6 +127,9 @@ class Project:
     profile_name: str = "smart"
     language: str = "fa"
     duration: float = 0.0
+    # Set once the subtitle has been edited by hand. Empty means "nobody has
+    # touched this yet, so build the lines from the style".
+    lines: list[EditedLine] = field(default_factory=list)
     schema: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -112,6 +141,7 @@ class Project:
             "language": self.language,
             "duration": round(self.duration, 3),
             "words": [w.to_dict() for w in self.words],
+            "lines": [line.to_dict() for line in self.lines],
         }
 
     @classmethod
@@ -123,6 +153,7 @@ class Project:
             profile_name=d.get("profile_name", "smart"),
             language=d.get("language", "fa"),
             duration=float(d.get("duration", 0.0)),
+            lines=[EditedLine.from_dict(line) for line in d.get("lines", [])],
             schema=int(d.get("schema", SCHEMA_VERSION)),
         )
 

@@ -6,10 +6,11 @@ stay left-to-right because that is how they are actually read.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTime, QUrl
+from PySide6.QtCore import QPointF, QRectF, Qt, QTime, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QStackedWidget,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -33,12 +35,28 @@ from ..config import BUILTIN_PROFILES, AppConfig
 from ..engine import locate, modelstore
 from . import theme
 from .editor import EditorDialog
+from ..text.normalize import to_persian_digits
 from .worker import Job, TranscribeWorker
 
-VIDEO_SUFFIXES = {
-    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv",
-    ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg",
-}
+log = logging.getLogger(__name__)
+
+VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv", ".flv"}
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
+MEDIA_SUFFIXES = VIDEO_SUFFIXES | AUDIO_SUFFIXES
+
+# One filter line, so the file dialog opens showing everything that works.
+MEDIA_FILTER = (
+    "ویدیو و صدا (" + " ".join(f"*{s}" for s in sorted(MEDIA_SUFFIXES)) + ");;"
+    "ویدیو (" + " ".join(f"*{s}" for s in sorted(VIDEO_SUFFIXES)) + ");;"
+    "صدا (" + " ".join(f"*{s}" for s in sorted(AUDIO_SUFFIXES)) + ");;"
+    "همه فایل‌ها (*)"
+)
+
+
+def media_paths(urls) -> list[Path]:
+    """The files in a drop that this program can actually read."""
+    paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
+    return [p for p in paths if p.suffix.lower() in MEDIA_SUFFIXES]
 
 STATUS_QUEUED = "در صف"
 STATUS_RUNNING = "در حال پردازش"
@@ -46,49 +64,150 @@ STATUS_DONE = "آماده"
 STATUS_FAILED = "خطا"
 
 
+class AppMark(QWidget):
+    """The product mark: a rounded tile with a subtitle glyph inside.
+
+    Drawn rather than shipped as an asset, so it scales with the window and
+    needs no icon file in the bundle.
+    """
+
+    def __init__(self, size: int = 40) -> None:
+        super().__init__()
+        self._size = size
+        self.setFixedSize(size, size)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QColor, QPainter, QPainterPath
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        box = self.rect().adjusted(0, 0, -1, -1)
+
+        tile = QPainterPath()
+        tile.addRoundedRect(box, theme.RADIUS, theme.RADIUS)
+        painter.fillPath(tile, QColor(theme.DARK.accent))
+
+        # Two subtitle lines, the shorter one centred underneath.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(theme.DARK.accent_text))
+        unit = self._size / 10
+        painter.drawRoundedRect(
+            QRectF(unit * 2, unit * 5.4, unit * 6, unit * 0.9), unit * 0.45, unit * 0.45
+        )
+        painter.drawRoundedRect(
+            QRectF(unit * 3.2, unit * 7.1, unit * 3.6, unit * 0.9), unit * 0.45, unit * 0.45
+        )
+        painter.end()
+
+
+class DropGlyph(QWidget):
+    """An arrow into a tray: the one picture the empty state needs."""
+
+    def __init__(self, size: int = 64) -> None:
+        super().__init__()
+        self._size = size
+        self.setFixedSize(size, size)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        from PySide6.QtGui import QColor, QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        unit = self._size / 16
+        pen = QPen(QColor(theme.DARK.text_muted))
+        pen.setWidthF(unit * 0.9)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+
+        # Downward arrow.
+        painter.drawLine(QPointF(unit * 8, unit * 2), QPointF(unit * 8, unit * 9))
+        painter.drawLine(QPointF(unit * 5, unit * 6), QPointF(unit * 8, unit * 9))
+        painter.drawLine(QPointF(unit * 11, unit * 6), QPointF(unit * 8, unit * 9))
+        # The tray it lands in.
+        painter.drawLine(QPointF(unit * 3, unit * 11), QPointF(unit * 3, unit * 13.5))
+        painter.drawLine(QPointF(unit * 3, unit * 13.5), QPointF(unit * 13, unit * 13.5))
+        painter.drawLine(QPointF(unit * 13, unit * 13.5), QPointF(unit * 13, unit * 11))
+        painter.end()
+
+
 class DropZone(QFrame):
     """The empty state: never a blank window."""
 
     def __init__(self, on_files) -> None:
         super().__init__()
-        self.setObjectName("DropZone")
+        self.setObjectName("DropZoneIdle")
         self.setAcceptDrops(True)
         self.setMinimumHeight(120)
         self._on_files = on_files
 
+        # One centred group, not a title at the top and a hint stranded at
+        # the bottom of an empty rectangle.
         layout = QVBoxLayout(self)
-        layout.setSpacing(theme.SPACE)
-        title = QLabel("ویدیو را اینجا رها کن")
+        layout.setSpacing(theme.SPACE * 2)
+        layout.addStretch(1)
+
+        glyph = DropGlyph()
+        holder = QHBoxLayout()
+        holder.addStretch(1)
+        holder.addWidget(glyph)
+        holder.addStretch(1)
+        layout.addLayout(holder)
+
+        title = QLabel("ویدیو یا فایل صوتی را اینجا رها کن")
         title.setObjectName("Heading")
         title.setAlignment(Qt.AlignCenter)
-        hint = QLabel("یا کلیک کن تا از سیستم انتخاب کنی — چند فایل هم می‌شود")
+        hint = QLabel("هر جای پنجره هم رها کنی می‌گیرد — یا از سیستم انتخاب کن")
         hint.setObjectName("Muted")
         hint.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
         layout.addWidget(hint)
 
+        pick = QPushButton("انتخاب فایل")
+        pick.setObjectName("Primary")
+        pick.clicked.connect(self.choose_files)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(pick)
+        buttons.addStretch(1)
+        layout.addSpacing(theme.SPACE)
+        layout.addLayout(buttons)
+        layout.addStretch(1)
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        paths, _ = QFileDialog.getOpenFileNames(self, "انتخاب ویدیو")
+        self.choose_files()
+
+    def choose_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "انتخاب ویدیو یا صدا", "", MEDIA_FILTER)
         if paths:
             self._on_files([Path(p) for p in paths])
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
+        log.info("درگ روی ناحیه رها کردن: %s", event.mimeData().formats())
         if event.mimeData().hasUrls():
             self.setObjectName("DropZoneActive")
             self.setStyleSheet(self.styleSheet())  # force a repaint of the border
             event.acceptProposedAction()
 
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        # Accepting the enter is not enough: every move has to be answered as
+        # well, or the cursor keeps saying "no" and the drop never arrives.
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
     def dragLeaveEvent(self, event) -> None:  # noqa: N802
-        self.setObjectName("DropZone")
+        self.setObjectName("DropZoneIdle")
         self.setStyleSheet(self.styleSheet())
 
     def dropEvent(self, event) -> None:  # noqa: N802
-        self.setObjectName("DropZone")
+        self.setObjectName("DropZoneIdle")
         self.setStyleSheet(self.styleSheet())
-        paths = [Path(url.toLocalFile()) for url in event.mimeData().urls()]
-        wanted = [p for p in paths if p.suffix.lower() in VIDEO_SUFFIXES]
+        urls = event.mimeData().urls()
+        wanted = media_paths(urls)
+        log.info("رها شد روی ناحیه: %d آدرس، %d قابل استفاده", len(urls), len(wanted))
         if wanted:
             self._on_files(wanted)
+            event.acceptProposedAction()
 
 
 class MainWindow(QMainWindow):
@@ -108,6 +227,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("FarsiSub — زیرنویس فارسی")
         self.setLayoutDirection(Qt.RightToLeft)
+        # Dropping onto the queue, the options or anywhere else used to do
+        # nothing at all: only the dashed strip listened.
+        self.setAcceptDrops(True)
         self.resize(980, 640)
         self._build()
         self._refresh_model_state()
@@ -121,26 +243,39 @@ class MainWindow(QMainWindow):
         layout.setSpacing(theme.SPACE * 3)
 
         layout.addWidget(self._header())
-        layout.addWidget(DropZone(self.add_files))
         layout.addWidget(self._options())
-        layout.addWidget(self._table(), stretch=1)
+        layout.addWidget(self._work_surface(), stretch=1)
         layout.addWidget(self._footer())
 
         self.setCentralWidget(root)
         self._shortcuts()
 
     def _header(self) -> QWidget:
+        """Name, one line of promise, and the engine state as a chip.
+
+        The old header was a single bold sentence in a corner: nothing said
+        which program this was, and the engine state read as an afterthought.
+        """
         box = QWidget()
         row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(0, 0, 0, theme.SPACE)
+        row.setSpacing(theme.SPACE * 3)
 
-        title = QLabel("زیرنویس فارسی، کاملاً روی همین کامپیوتر")
-        title.setObjectName("Heading")
-        self.engine_label = QLabel()
-        self.engine_label.setObjectName("Muted")
+        row.addWidget(AppMark())
 
-        row.addWidget(title)
+        names = QVBoxLayout()
+        names.setSpacing(0)
+        title = QLabel("FarsiSub")
+        title.setObjectName("Display")
+        subtitle = QLabel("فارسی‌ساب — زیرنویس فارسی، کاملاً روی همین کامپیوتر")
+        subtitle.setObjectName("Muted")
+        names.addWidget(title)
+        names.addWidget(subtitle)
+        row.addLayout(names)
+
         row.addStretch(1)
+        self.engine_label = QLabel()
+        self.engine_label.setObjectName("Chip")
         row.addWidget(self.engine_label)
         return box
 
@@ -182,15 +317,65 @@ class MainWindow(QMainWindow):
             lambda on: setattr(self.config.text, "strip_final_period", not on)
         )
 
-        row.addWidget(QLabel("سبک:"))
-        row.addWidget(self.profile_box)
-        row.addWidget(QLabel("مدل:"))
-        row.addWidget(self.model_box)
-        row.addWidget(self.merge_box)
-        row.addWidget(self.digits_box)
-        row.addWidget(self.period_box)
+        def field(caption: str, widget) -> QVBoxLayout:
+            """A control with its label above it, not floating beside it."""
+            column = QVBoxLayout()
+            column.setSpacing(theme.SPACE)
+            label = QLabel(caption)
+            label.setObjectName("Caption")
+            column.addWidget(label)
+            column.addWidget(widget)
+            return column
+
+        row.addLayout(field("سبک زیرنویس", self.profile_box))
+        row.addLayout(field("مدل", self.model_box))
+
+        line = QFrame()
+        line.setFrameShape(QFrame.VLine)
+        line.setObjectName("Divider")
+        line.setFixedWidth(1)
+        row.addWidget(line)
+
+        switches = QVBoxLayout()
+        switches.setSpacing(theme.SPACE)
+        caption = QLabel("گزینه‌ها")
+        caption.setObjectName("Caption")
+        switches.addWidget(caption)
+        boxes = QHBoxLayout()
+        boxes.setSpacing(theme.SPACE * 4)
+        boxes.addWidget(self.merge_box)
+        boxes.addWidget(self.digits_box)
+        boxes.addWidget(self.period_box)
+        switches.addLayout(boxes)
+        row.addLayout(switches)
+
         row.addStretch(1)
         return card
+
+    def _work_surface(self) -> QWidget:
+        """One card that is either the invitation or the queue -- never both.
+
+        The window used to show a dashed strip at the top and, underneath, a
+        large empty table with nothing to say. Now the empty state lives
+        inside the card and the queue replaces it once there is work.
+        """
+        card = QFrame()
+        card.setObjectName("Card")
+        theme.elevate(card)
+        column = QVBoxLayout(card)
+        column.setContentsMargins(theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3)
+        column.setSpacing(theme.SPACE * 2)
+
+        self.stack = QStackedWidget()
+        self.drop_zone = DropZone(self.add_files)
+        self.stack.addWidget(self.drop_zone)
+        self.stack.addWidget(self._table())
+        column.addWidget(self.stack, stretch=1)
+        return card
+
+    def _show_queue(self) -> None:
+        """Swap the invitation for the list, or back when the queue empties."""
+        self.stack.setCurrentIndex(1 if self.table.rowCount() else 0)
 
     def _table(self) -> QWidget:
         self.table = QTableWidget(0, 3)
@@ -217,14 +402,14 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.setFormat("آماده")
+        self.progress.setTextVisible(False)
         # The bar fills left-to-right; only the label inside it is Persian.
         self.progress.setLayoutDirection(Qt.LeftToRight)
 
-        self.status_label = QLabel("")
+        self.status_label = QLabel("آماده")
         self.status_label.setObjectName("Muted")
 
-        self.start_button = QPushButton("شروع")
+        self.start_button = QPushButton("شروع رونویسی")
         self.start_button.setObjectName("Primary")
         self.start_button.clicked.connect(self.start_queue)
 
@@ -252,14 +437,30 @@ class MainWindow(QMainWindow):
         self.clear_button.setEnabled(False)
         self.clear_button.clicked.connect(self.clear_queue)
 
-        row.addWidget(self.progress, stretch=1)
+        # Seven buttons of equal weight told the eye nothing. The one action
+        # that matters keeps its colour; the rest go quiet, and the progress
+        # bar is a hairline over them instead of an empty pill.
+        for quiet in (self.clear_button, self.again_button, self.open_button):
+            quiet.setObjectName("Quiet")
+
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(theme.SPACE * 2)
+        column.addWidget(self.progress)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(theme.SPACE * 2)
         row.addWidget(self.status_label)
+        row.addStretch(1)
         row.addWidget(self.clear_button)
         row.addWidget(self.again_button)
-        row.addWidget(self.edit_button)
         row.addWidget(self.open_button)
+        row.addWidget(self.edit_button)
         row.addWidget(self.cancel_button)
         row.addWidget(self.start_button)
+        column.addLayout(row)
         return box
 
     def _shortcuts(self) -> None:
@@ -291,7 +492,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- behaviour
 
     def _pick_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "انتخاب ویدیو")
+        paths, _ = QFileDialog.getOpenFileNames(self, "انتخاب ویدیو یا صدا", "", MEDIA_FILTER)
         if paths:
             self.add_files([Path(p) for p in paths])
 
@@ -302,13 +503,19 @@ class MainWindow(QMainWindow):
             self.queue.append(path)
             row = self.table.rowCount()
             self.table.insertRow(row)
-            name_item = QTableWidgetItem(path.name)
+            # A Latin name inside a right-to-left table gets reordered by the
+            # bidi algorithm -- "5.wav" came out as "wav.5". The isolate marks
+            # pin it down.
+            name_item = QTableWidgetItem(f"⁦{path.name}⁩")
             # File names are usually Latin: pin them to the visual left even
             # though the window itself is right-to-left.
             name_item.setTextAlignment(Qt.AlignLeft | Qt.AlignAbsolute | Qt.AlignVCenter)
             name_item.setToolTip(str(path))
             self.table.setItem(row, 0, name_item)
-            self.table.setItem(row, 1, QTableWidgetItem(STATUS_QUEUED))
+            self._show_queue()
+            status_item = QTableWidgetItem(STATUS_QUEUED)
+            self.table.setItem(row, 1, status_item)
+            self._paint_status(status_item)
             self.table.setItem(row, 2, QTableWidgetItem(""))
         self._update_buttons()
 
@@ -321,9 +528,10 @@ class MainWindow(QMainWindow):
             rows = set(range(self.table.rowCount()))
         for row in rows:
             self.table.item(row, 1).setText(STATUS_QUEUED)
+            self._paint_status(self.table.item(row, 1))
             self.table.item(row, 2).setText("")
         self.progress.setValue(0)
-        self.progress.setFormat("آماده")
+        self.status_label.setText("آماده")
         self._update_buttons()
 
     def remove_selected(self) -> None:
@@ -333,6 +541,7 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.table.removeRow(row)
             del self.queue[row]
+        self._show_queue()  # emptying the list by hand also brings it back
         self._update_buttons()
 
     def clear_queue(self) -> None:
@@ -343,8 +552,8 @@ class MainWindow(QMainWindow):
         self.last_output = None
         self.open_button.setEnabled(False)
         self.progress.setValue(0)
-        self.progress.setFormat("آماده")
-        self.status_label.setText("")
+        self.status_label.setText("آماده")
+        self._show_queue()  # an empty queue means the invitation comes back
         self._update_buttons()
 
     def _profile_changed(self, index: int) -> None:
@@ -393,10 +602,18 @@ class MainWindow(QMainWindow):
         binary = locate.whisper_binary()
         # Naming the models beats counting them: the dropdown only shows the
         # selected one until it is opened.
-        names = "، ".join(installed) if installed else "هیچ مدلی نصب نیست"
-        self.engine_label.setText(
-            f"موتور: {'آماده' if binary else 'پیدا نشد'} | مدل‌ها: {names}"
+        # A chip, not a sentence: state first, then how many models back it.
+        if binary and installed:
+            self.engine_label.setObjectName("ChipOk")
+            count = to_persian_digits(str(len(installed)))
+            self.engine_label.setText(f"موتور آماده · {count} مدل")
+        else:
+            self.engine_label.setObjectName("Chip")
+            self.engine_label.setText("موتور آماده نیست" if not binary else "مدلی نصب نیست")
+        self.engine_label.setToolTip(
+            "مدل‌های نصب‌شده: " + ("، ".join(installed) if installed else "هیچ‌کدام")
         )
+        self.engine_label.setStyleSheet(self.engine_label.styleSheet())  # re-apply
         self._update_buttons()
 
     def _update_buttons(self) -> None:
@@ -417,9 +634,24 @@ class MainWindow(QMainWindow):
     def _row_for(self, path: Path) -> int:
         return self.queue.index(path)
 
+    STATUS_COLOURS = {
+        STATUS_RUNNING: "accent",
+        STATUS_DONE: "ok",
+        STATUS_FAILED: "danger",
+    }
+
+    def _paint_status(self, item) -> None:
+        """Colour carries the state, so the column can be read at a glance."""
+        from PySide6.QtGui import QBrush, QColor
+
+        token = self.STATUS_COLOURS.get(item.text(), "text_muted")
+        item.setForeground(QBrush(QColor(getattr(theme.DARK, token))))
+
     def _set_status(self, path: Path, status: str, output: str = "") -> None:
         row = self._row_for(path)
-        self.table.item(row, 1).setText(status)
+        item = self.table.item(row, 1)
+        item.setText(status)
+        self._paint_status(item)
         if output:
             self.table.item(row, 2).setText(output)
 
@@ -441,7 +673,7 @@ class MainWindow(QMainWindow):
         self.started_at = time.time()
         self._set_status(path, STATUS_RUNNING)
         self.progress.setValue(0)
-        self.progress.setFormat(f"{path.name} — %p%")
+        self.status_label.setText(f"در حال پردازش {path.name}")
 
         # Which file this job is for; the slots below run later, on the GUI
         # thread, and need it.
@@ -482,16 +714,14 @@ class MainWindow(QMainWindow):
         self.last_project = project
         self.open_button.setEnabled(True)
         self.edit_button.setEnabled(True)
-        self.status_label.setText("")
+        self.status_label.setText("انجام شد")
         self.progress.setValue(100)
-        self.progress.setFormat("انجام شد")
 
     def _on_failed(self, message: str) -> None:
         path = self.running_path
         if path is not None:
             self._set_status(path, STATUS_FAILED)
-        self.status_label.setText("")
-        self.progress.setFormat("خطا")
+        self.status_label.setText("خطا")
         if message != "لغو شد":
             QMessageBox.warning(self, "پردازش انجام نشد", message)
 
@@ -521,6 +751,30 @@ class MainWindow(QMainWindow):
     def refresh_models(self) -> None:
         """Public: re-read the models folder (a model may have just arrived)."""
         self._refresh_model_state()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        log.info("درگ روی پنجره: %s", event.mimeData().formats())
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        urls = event.mimeData().urls()
+        wanted = media_paths(urls)
+        log.info("رها شد روی پنجره: %d آدرس، %d قابل استفاده", len(urls), len(wanted))
+        if wanted:
+            self.add_files(wanted)
+            event.acceptProposedAction()
+        elif urls:
+            QMessageBox.information(
+                self,
+                "این فایل خوانده نمی‌شود",
+                "فقط ویدیو و فایل صوتی: "
+                + "، ".join(sorted(s.lstrip(".") for s in MEDIA_SUFFIXES)),
+            )
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         from PySide6.QtCore import QEvent

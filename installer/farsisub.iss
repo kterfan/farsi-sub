@@ -7,7 +7,7 @@
 ; keep its models and settings beside itself.
 
 #define AppName "FarsiSub"
-#define AppVersion "1.1.3"
+#define AppVersion "1.5.2"
 #define AppPublisher "Erfan"
 #define AppExe "FarsiSub.exe"
 
