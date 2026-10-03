@@ -74,13 +74,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("تنظیمات پیشرفته")
         self.setLayoutDirection(Qt.RightToLeft)
         self.resize(900, 560)
-        # The shared sheet has no rule for group boxes: without room above,
-        # their titles were drawn over the first row.
-        self.setStyleSheet(
-            "QGroupBox { margin-top: 22px; padding-top: 10px; font-weight: 600; }"
-            "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top right;"
-            " padding: 0 8px; }"
-        )
+        # Group boxes are styled by the shared sheet, title above the card.
 
         base = config.custom_profile or replace(
             config.profile, name=CUSTOM_PROFILE, label="سبک من"
@@ -102,6 +96,7 @@ class SettingsDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("ذخیره")
+        buttons.button(QDialogButtonBox.Save).setObjectName("Primary")
         buttons.button(QDialogButtonBox.Cancel).setText("انصراف")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)

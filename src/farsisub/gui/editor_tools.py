@@ -144,8 +144,8 @@ class WaveformStrip(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setMinimumHeight(70)
-        self.setMaximumHeight(90)
+        self.setMinimumHeight(72)
+        self.setMaximumHeight(88)
         self.setMouseTracking(True)
         self.setLayoutDirection(Qt.LeftToRight)  # time runs left to right
         self.envelope = None
@@ -207,46 +207,81 @@ class WaveformStrip(QWidget):
 
     # painting
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        palette = theme.LIGHT
+        """A rounded strip: the lines as soft bands, the current one in accent.
+
+        The bars of the current line take the accent too, so the sound that
+        belongs to it stands out from its neighbours at a glance; its two
+        edges carry a grip, which is what says "this can be dragged".
+        """
+        from PySide6.QtGui import QPainterPath
+
+        palette = theme.tokens_for(self)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), QColor(palette.surface_alt))
         height = self.height()
+        frame = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        clip = QPainterPath()
+        clip.addRoundedRect(frame, theme.RADIUS + 2, theme.RADIUS + 2)
+        painter.fillPath(clip, QColor(palette.surface))
+        painter.setClipPath(clip)
 
+        current = self.spans[self.current] if 0 <= self.current < len(self.spans) else None
         for index, (start, end) in enumerate(self.spans):
             if end < self.window[0] or start > self.window[1]:
                 continue
             left, right = self.x_of(start), self.x_of(end)
             colour = QColor(palette.accent if index == self.current else palette.border_strong)
-            colour.setAlpha(70 if index == self.current else 45)
+            colour.setAlpha(46 if index == self.current else 40)
             painter.fillRect(QRectF(left, 0, max(1.0, right - left), height), colour)
 
         if self.envelope is None or not len(self.envelope):
             painter.setPen(QColor(palette.text_muted))
             painter.drawText(self.rect(), Qt.AlignCenter, self.message)
         else:
-            painter.setPen(QPen(QColor(palette.text_muted), 1))
+            quiet = QColor(palette.text_muted)
+            quiet.setAlpha(150)
+            loud = QColor(palette.accent)
             bins = len(self.envelope)
             middle = height / 2
-            for x in range(self.width()):
+            # Bars two pixels wide with a gap: reads as a waveform, not a smear.
+            step = 3
+            for x in range(0, self.width(), step):
                 first = int(self.seconds_at(x) * 100)
-                last = max(first + 1, int(self.seconds_at(x + 1) * 100))
+                last = max(first + 1, int(self.seconds_at(x + step) * 100))
                 if first >= bins or last <= 0:
                     continue
                 value = float(self.envelope[max(0, first) : min(bins, last)].max())
-                half = min(1.0, value / self.peak) * (height / 2 - 4)
-                painter.drawLine(QPointF(x, middle - half), QPointF(x, middle + half))
+                half = max(1.0, min(1.0, value / self.peak) * (height / 2 - 8))
+                inside = current is not None and self.x_of(current[0]) <= x <= self.x_of(current[1])
+                pen = QPen(loud if inside else quiet, 2)
+                pen.setCapStyle(Qt.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(QPointF(x + 1, middle - half), QPointF(x + 1, middle + half))
 
-        if 0 <= self.current < len(self.spans):
-            pen = QPen(QColor(palette.accent), 3)
-            painter.setPen(pen)
-            for edge in self.spans[self.current]:
+        if current is not None:
+            accent = QColor(palette.accent)
+            for edge in current:
                 x = self.x_of(edge)
+                painter.setPen(QPen(accent, 2))
                 painter.drawLine(QPointF(x, 0), QPointF(x, height))
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(accent)
+                painter.drawRoundedRect(QRectF(x - 4, height / 2 - 12, 8, 24), 4, 4)
+                painter.setBrush(QColor("#FFFFFF"))
+                for dy in (-5, 0, 5):
+                    painter.drawEllipse(QPointF(x, height / 2 + dy), 1.1, 1.1)
         if self.window[0] <= self.playhead <= self.window[1]:
-            painter.setPen(QPen(QColor(palette.danger), 2))
             x = self.x_of(self.playhead)
-            painter.drawLine(QPointF(x, 0), QPointF(x, height))
+            painter.setPen(QPen(QColor(palette.danger), 2))
+            painter.drawLine(QPointF(x, 4), QPointF(x, height))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(palette.danger))
+            painter.drawEllipse(QPointF(x, 5), 4, 4)
+
+        painter.setClipping(False)
+        painter.setPen(QPen(QColor(palette.border), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(frame, theme.RADIUS + 2, theme.RADIUS + 2)
         painter.end()
 
     # mouse

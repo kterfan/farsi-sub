@@ -7,13 +7,13 @@
 ```
 نسخه نصب‌شده : %LOCALAPPDATA%\Programs\FarsiSub\FarsiSub.exe
 از سورس       : C:\Users\Erfan\projects\farsi-sub\FarsiSub.bat
-تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۵۶ تست)
+تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۶۳ تست)
 بیلد          : .venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
 بررسی بسته    : .venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
 نصاب          : "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
 ```
 
-نسخه فعلی: **۱.۷.۰** — `dist\FarsiSub-1.7.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
+نسخه فعلی: **۱.۸.۰** — `dist\FarsiSub-1.8.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
 
 ## انتشار نسخه تازه
 
@@ -68,6 +68,7 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 | ترکیب دو مدل و داوری تکرار | `src/farsisub/render/merge.py` |
 | نگارش فارسی | `src/farsisub/text/normalize.py`، `corrections.py` |
 | ویرایشگر | `src/farsisub/gui/editor.py` |
+| ظاهر: رنگ‌ها، استایل، آیکون‌ها، دکمه و ردیف‌های تاشونده | `src/farsisub/gui/theme.py`، `icons.py`، `widgets.py` |
 
 ## چه چیزی کار می‌کند
 
@@ -97,6 +98,10 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 
 اینها همه اندازه‌گیری شده‌اند، نه حدس. تغییرشان بدون دلیل، باگ‌های قدیمی را برمی‌گرداند:
 
+- **هیچ دکمه‌ای پشت منوی سرریز نمی‌رود.** ردیف‌های دکمه `ResponsiveRow` هستند (`gui/widgets.py`): اول برچسب دکمه‌های با `priority` کمتر برداشته می‌شود، بعد ردیف به خط دوم می‌رود. `QToolBar` عمداً کنار گذاشته شد؛ تست `test_every_editor_command_is_on_screen_in_a_small_window` همین را نگه می‌دارد.
+- **`QWidgetItem` متد `sizePolicy()` ندارد.** خطای پایتون داخل override یک `QLayout` در PySide 6.11 کل برنامه را با segfault می‌بندد، نه با traceback.
+- **محتوای `ActionButton` را خودمان می‌کشیم.** `QToolButton` در راست‌به‌چپ آیکون را سمت اشتباه می‌گذاشت و کنارش فاصله خالی می‌ماند؛ قاب و hover هنوز از استایل‌شیت می‌آید.
+- آیکون‌ها کد هستند (`gui/icons.py`)، مثل آرم؛ فایلی به نصاب اضافه نمی‌شود. فقط فلش منوهای کشویی یک PNG موقت است چون استایل‌شیت جز فایل چیزی نمی‌گیرد.
 - **`-dtw` باید با `-nfa` بیاید.** flash attention در whisper.cpp تایم‌استمپ کلمه‌ای را بی‌صدا خاموش می‌کند و همه `t_dtw`ها منفی یک برمی‌گردند.
 - **VAD داخلی whisper.cpp استفاده نمی‌شود.** با `--vad` کلمات بعد از سه ثانیه سکوت حدود ۳.۵ ثانیه زودتر برگشتند. حذف توهم روی سکوت با نوار انرژی خودمان انجام می‌شود.
 - **زمان توکن‌ها بر حسب صدم ثانیه است**، نه میلی‌ثانیه.

@@ -14,7 +14,7 @@
 #define AppName "FarsiSub"
 #define AppNameFa "فارسی‌ساب"
 ; Same number as __version__ in src/farsisub/__init__.py.
-#define AppVersion "1.7.0"
+#define AppVersion "1.8.0"
 #define AppPublisher "Erfan Esmailzadeh (عرفان اسمعیل‌زاده)"
 #define AppUrl "https://github.com/kterfan/farsi-sub"
 #define AppExe "FarsiSub.exe"
