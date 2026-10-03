@@ -817,7 +817,7 @@ class MainWindow(QMainWindow):
         if binary and installed:
             self.engine_label.setObjectName("ChipOk")
             count = to_persian_digits(str(len(installed)))
-            self.engine_label.setText(f"موتور آماده · {count} مدل")
+            self.engine_label.setText(f"موتور آماده — {count} مدل")
         else:
             self.engine_label.setObjectName("Chip")
             self.engine_label.setText("موتور آماده نیست" if not binary else "مدلی نصب نیست")

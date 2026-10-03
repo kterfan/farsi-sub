@@ -1,118 +1,218 @@
-# FarsiSub
+<div align="center">
 
-ساخت زیرنویس فارسی از روی ویدیو، کاملاً محلی و آفلاین.
+# FarsiSub · فارسی‌ساب
 
-## وضعیت فعلی
+**Persian subtitles from video and audio — entirely on your own computer.**
+No cloud, no account, no upload. Your files never leave your machine.
 
-نسخه ۱.۷.۰ — خط لوله کامل روی GPU کار می‌کند و نصاب ویندوز ساخته می‌شود. تغییرات هر نسخه در [CHANGELOG.md](CHANGELOG.md).
-وضعیت روز و کارهای باز در [HANDOFF.md](HANDOFF.md) است.
+[**⬇ Download for Windows**](https://github.com/kterfan/farsi-sub/releases/latest) ·
+[Install](#install) · [Features](#features) · [Build from source](#for-developers)
 
-| بخش | وضعیت |
-|---|---|
-| ساختار داده و فایل پروژه `.fsub` | ✅ |
-| چهار سبک زیرنویس: جمله‌ای، هوشمند، ریلز فارسی، کلمه به کلمه + سبک شخصی | ✅ |
-| قوانین نگارش فارسی (نیم‌فاصله، ارقام، نقطه‌گذاری) | ✅ |
-| خروجی SRT / VTT / ASS / TXT و ویدیو با زیرنویس سوخته (MP4) | ✅ |
-| ساخت دستور whisper.cpp و پارس JSON آن | ✅ |
-| CLI | ✅ |
-| باینری whisper.cpp + مدل (دانلود خودکار) | ✅ |
-| استخراج صدا و نوار انرژی با PyAV | ✅ |
-| موتور کلمه کلیدی (تأکید صوتی + فیلتر دستوری) | ✅ |
-| خط لوله کامل: ویدیو → SRT روی GPU | ✅ |
-| توکن‌های طراحی رابط | ✅ |
-| رابط گرافیکی (drag & drop، صف، ترکیب دو مدل) | ✅ |
-| ویرایشگر: اصلاح کلمه، تقسیم و ادغام خط، نیم‌فاصله، موج صدا، جستجو و جایگزینی، کلمه کلیدی دستی | ✅ |
-| دیکشنری اصلاحات آموزش‌پذیر | ✅ |
-| دستیار اولین اجرا و دانلود مدل | ✅ |
-| نصاب ویندوز (Inno Setup، بدون نیاز به ادمین) | ✅ |
+English · [فارسی](README.fa.md)
 
-## معماری
+![FarsiSub main window](docs/screenshots/main-dark.png)
 
-یک بار رونویسی، بی‌نهایت بار رندر:
+</div>
+
+---
+
+## What it does
+
+Drop a video (or an audio file), pick a style, press start. FarsiSub transcribes the
+Persian speech with [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and writes
+a subtitle file that follows Persian typography rules: correct half-spaces (ZWNJ),
+Persian digits, proper punctuation. Then you can open the built-in editor, watch the
+video, fix what the model got wrong, and save.
+
+Everything runs offline. The only thing that ever touches the internet is the one-time
+download of the speech-recognition model, on first launch.
+
+> The interface is in Persian (right-to-left). The project is built for Persian speech;
+> other languages are not a goal.
+
+## Install
+
+1. Go to the **[latest release](https://github.com/kterfan/farsi-sub/releases/latest)** and
+   download `FarsiSub-<version>-Setup.exe` from the *Assets* list.
+2. Run it. No administrator rights are needed; it installs for your user only.
+3. On first launch FarsiSub offers to download a speech model (see the table below).
+   Pick one and wait for it to finish — after that it works offline.
+
+**Requirements**
+
+- Windows 10 or 11, 64-bit
+- An NVIDIA graphics card is recommended: transcription is about 3.4× faster than
+  real time on an RTX 3060 with `large-v3`. Without one the program falls back to the
+  CPU, which works everywhere but is much slower.
+- Disk space for the model (0.6 – 3.1 GB) plus the program itself (the installer is about 360 MB)
+
+**About the SmartScreen warning.** The installer is not code-signed yet, so Windows may
+show *"Windows protected your PC"*. Click **More info → Run anyway**. The whole source is
+in this repository and the installer is built from it by GitHub Actions
+(see [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)).
+
+Updating is the same: run the newer installer over the old one. Your models, settings
+and learned corrections are kept.
+
+### Models
+
+| Model | Size | Persian quality | Speed |
+|---|---|---|---|
+| Large v3 (full) — default | 3.1 GB | best | slow |
+| Large v3 (compressed) | 1.1 GB | 1–2 % more errors | medium |
+| Turbo (full) | 1.6 GB | below large | very fast |
+| Turbo q8 | 0.9 GB | below turbo | very fast |
+| Turbo q5 | 0.6 GB | lowest | very fast |
+
+If in doubt, take the default. On a laptop without a good GPU, *Large v3 compressed* is
+a sensible middle.
+
+## Features
+
+- **Four subtitle styles** — *Sentence*, *Smart*, *Persian Reels* (one line, a standout
+  keyword on its own cue), and *Word by word* — plus a custom style of your own.
+  Switching style costs nothing: the audio is transcribed once and every style is just
+  a re-render of the same words.
+- **Persian text rules** — half-spaces, Persian or Latin digits, optional final period.
+- **Output formats** — SRT, VTT, ASS (font, colour, outline, keyword colour), plain
+  text, and a **video with the subtitle burned in** (MP4) for Instagram and other places
+  that take no separate subtitle file.
+- **Built-in editor**
+  - the video plays beside the text, with the current line drawn on the picture
+  - words the model was unsure about are coloured, and `F3` jumps to the next one
+  - split, merge, delete, move a word to the neighbouring line — timings follow the
+    words, so nothing drifts
+  - drag the edge of a line on the waveform to retime it
+  - find and replace across the whole subtitle
+  - unlimited undo / redo
+  - **teachable dictionary:** correct a word once and it is fixed in every future video
+- **Two-model mode** — a second model fills the gaps the first one left silent and
+  arbitrates repeated text.
+- **Queue** — add many files; they run one after another, with a per-file progress bar,
+  and a tray icon with progress and notifications.
+- **Light and dark theme**; the window adapts to small screens without hiding any command.
+- **Command line** for scripting (see below).
+
+Supported input: `mp4 mkv mov avi webm m4v wmv flv` and `mp3 wav m4a aac flac ogg opus wma`.
+
+![The subtitle editor](docs/screenshots/editor.png)
+
+## Where your data lives
+
+Next to the program, not in `AppData`:
 
 ```
-ویدیو → whisper.cpp → WordStream (کلمه، زمان، اطمینان) → رندر سبک → SRT
-                            ↑
-                      ویرایش دستی
+data\models\          speech models
+data\projects\        words, timings and confidences, for editing later (.fsub)
+data\logs\            farsisub.log and crash.log
+data\glossary.json    corrections you taught it
 ```
 
-WordStream در فایل `.fsub` ذخیره می‌شود. تغییر سبک یا هر تنظیم نگارشی فقط
-مرحله رندر را دوباره اجرا می‌کند — بدون لمس دوباره ویدیو.
+Uninstalling removes only the logs. Models, projects and your dictionary stay on purpose,
+so a reinstall does not cost you a 3 GB download — delete the `data\` folder by hand if you
+want them gone.
 
-## اجرا روزمره
+## How it works
 
-میان‌بر `FarsiSub` روی دسکتاپ. هر بار زدنش همان پنجره باز را جلو می‌آورد،
-نه یک نسخه تازه.
-
-همه داده‌ها **کنار خود برنامه** می‌مانند، نه در `AppData`:
+*Transcribe once, render as many times as you like.*
 
 ```
-farsi-sub\data\models\      مدل‌ها
-farsi-sub\data\projects\    کلمات و زمان‌ها، برای ویرایش بعدی
-farsi-sub\data\logs\        رویدادها و کرش
-farsi-sub\data\glossary.json اصلاح‌های یادگرفته‌شده
+video → PyAV (16 kHz WAV) → whisper.cpp → WordStream → normalise → segment → SRT/ASS/…
+                                              ↑
+                                         the editor
 ```
 
-این تصمیم عمدی است: `%LOCALAPPDATA%` برای پروسه‌های سندباکس‌شده بازنویسی
-می‌شود، و یک بار مدلی که دانلود شده بود در پوشه خصوصی یک کانتینر افتاد و
-برنامه‌ای که کاربر اجرا می‌کرد آن را نمی‌دید. مسیر کنار برنامه برای همه
-پروسه‌ها یکی است.
+whisper.cpp returns every word with its start time and confidence. That list — the
+*WordStream* — is saved as `.fsub`. Style, digits, line length and every other rule are
+only a rendering of it, and manual edits survive a change of style.
 
-## اجرا از سورس
+---
+
+## For developers
+
+### Run from source
+
+Python 3.12 or newer (`hazm` requires it).
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+python tools/bootstrap.py --flavour cuda --skip-model     # fetches whisper.cpp into bin/
+FarsiSub.bat                                              # the window
+```
+
+Command line:
 
 ```bash
 PYTHONPATH=src python -m farsisub.cli video.mp4 --profile smart
 PYTHONPATH=src python -m farsisub.cli video.fsub --profile reels --render-only
 PYTHONPATH=src python -m farsisub.cli video.fsub --profile word --format ass --render-only
 PYTHONPATH=src python -m farsisub.cli --list-models
-PYTHONPATH=src python -m farsisub.cli --version
 ```
 
-اگر پروژه در ویرایشگر شکل داده شده باشد، `--render-only` همان خط‌های ویرایش‌شده
-را می‌نویسد و سبک فقط شکست سطر را تعیین می‌کند.
+If a project was shaped in the editor, `--render-only` writes those edited lines; the
+style then only decides the line breaks.
 
-## تست
+### Tests
 
 ```bash
-python tests/run_tests.py     # بدون نیاز به pytest
-pytest tests/                 # وقتی venv ساخته شد
+python tests/run_tests.py     # no pytest needed
+pytest tests/                 # once a venv exists
 ```
 
-تست‌ها در یک پوشه داده موقت اجرا می‌شوند (`FARSISUB_DATA`)، نه در `data\` واقعی
-برنامه. تست‌های ویرایشگر به PySide6 نیاز دارند.
+Tests run against a temporary data folder (`FARSISUB_DATA`), never your real `data\`.
+The GUI tests need PySide6 and run headless with `QT_QPA_PLATFORM=offscreen`.
 
-## مسیرها
+### Build the installer
 
-| چه چیزی | کجا |
-|---|---|
-| باینری whisper.cpp و مدل VAD | `bin/` (یا متغیر `FARSISUB_BIN`) |
-| مدل‌های ASR | `data\models\` کنار برنامه (یا `FARSISUB_DATA`)؛ پوشه‌های دیگر در `data\model_dirs.txt` |
-| پروژه‌ها، لاگ، دیکشنری | `data\projects\`، `data\logs\`، `data\glossary.json` |
+Pushing to `master` or a `claude/**` branch builds the installer on GitHub Actions and
+attaches it to the run as an artifact. Pushing a tag such as `v1.8.0` also publishes a
+GitHub Release with the installer attached. To build by hand on Windows:
 
-## نکات فنی که به‌راحتی خراب می‌کنند
+```
+.venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
+.venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
+```
 
-همه این‌ها روی همین ماشین اندازه‌گیری شده‌اند، نه حدس:
+Project status and open work are in [HANDOFF.md](HANDOFF.md) (Persian);
+per-version changes are in [CHANGELOG.md](CHANGELOG.md) (Persian).
 
-- **flash attention، DTW را بی‌صدا خاموش می‌کند.** در سورس whisper.cpp اگر
-  `flash_attn` روشن باشد `dtw_token_timestamps` صفر می‌شود و همه `t_dtw`ها
-  منفی یک برمی‌گردند. پس `-dtw` همیشه با `-nfa` می‌آید.
-- **VAD داخلی whisper.cpp تایم‌لاین را جمع می‌کند.** با `--vad` کلمات بعد از
-  سه ثانیه سکوت حدود ۳.۵ ثانیه زودتر برگشتند. VAD خاموش است و حذف توهم روی
-  سکوت با نوار انرژی خودمان انجام می‌شود.
-- **whisper-cli فقط flac/mp3/ogg/wav می‌خواند.** ویدیو باید اول با PyAV به
-  WAV تک‌کاناله ۱۶ کیلوهرتز تبدیل شود.
-- **DTW فقط یک زمان به ازای توکن می‌دهد** (شروع). پایان هر کلمه از روی شروع
-  کلمه بعدی بسته می‌شود، وگرنه cueها روی هم می‌افتند.
-- زمان توکن‌ها بر حسب **صدم ثانیه** است، نه میلی‌ثانیه
-- `-ml` و `-sow` نباید فعال شوند؛ قطعه‌بندی کار ماست
-- توکن‌ها زیرکلمه‌ای‌اند؛ اطمینان هر کلمه = **کمینه** احتمال توکن‌هایش
-- توکن‌های کنترلی مثل `[_TT_350]` رقم دارند و باید صریح فیلتر شوند
+<details>
+<summary>Engineering notes — things that are easy to break (all measured, none guessed)</summary>
 
-## سازنده
+- **Flash attention silently disables DTW.** In whisper.cpp, if `flash_attn` is on then
+  `dtw_token_timestamps` is zeroed and every `t_dtw` comes back as −1. So `-dtw` always
+  travels with `-nfa`.
+- **whisper.cpp's built-in VAD collapses the timeline.** With `--vad`, words after three
+  seconds of silence came back about 3.5 s early. VAD is off; hallucinations over silence
+  are removed using our own energy envelope.
+- **whisper-cli reads only flac/mp3/ogg/wav**, so video is first converted to a mono
+  16 kHz WAV with PyAV.
+- **DTW gives one time per token** (the start). A word's end is closed from the next
+  word's start, otherwise cues overlap.
+- Token times are in **hundredths of a second**, not milliseconds.
+- `-ml` and `-sow` must stay off; segmentation is our job.
+- Tokens are sub-words; a word's confidence is the **minimum** over its tokens.
+- Control tokens such as `[_TT_350]` contain digits and must be filtered explicitly.
+- `%LOCALAPPDATA%` is rewritten for sandboxed processes, which is why data lives beside
+  the program: a model downloaded once landed in a container's private folder and the
+  app the user ran could not see it.
+- Never connect a Qt signal with a lambda: with no receiver object the slot runs on the
+  worker thread, and touching a widget from there is an access violation.
+- A Qt layout override that raises a Python exception takes the whole process down
+  (segfault, no traceback) under PySide 6.11.
 
-طراحی و برنامه‌نویسی: **عرفان اسمعیل‌زاده** — Erfan Esmailzadeh
-https://github.com/kterfan/farsi-sub
+</details>
 
-## لایسنس
+## Author
 
-MIT — فایل [LICENSE](LICENSE).
+Design and code by **Erfan Esmailzadeh** (عرفان اسمعیل‌زاده) —
+<https://github.com/kterfan/farsi-sub>
+
+Bundled components keep their own licences: whisper.cpp (MIT), Qt / PySide6 (LGPL),
+FFmpeg via PyAV (LGPL), the Vazirmatn font (OFL).
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
