@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from ..models import Word
 
@@ -24,12 +24,43 @@ class AudioError(RuntimeError):
     pass
 
 
+def decode_tolerant(container, stream, checkpoint: Callable[[], None] | None = None):
+    """Frames of one stream, skipping packets the decoder rejects.
+
+    Downloaded and phone-recorded files often carry a few broken packets.
+    Players step over them; PyAV raised on the first one ("Invalid data found
+    when processing input") and the whole file failed. A stream where nothing
+    at all decodes is still an error.
+    """
+    import logging
+
+    import av
+
+    good = bad = 0
+    for packet in container.demux(stream):
+        if checkpoint:
+            checkpoint()
+        try:
+            frames = packet.decode()
+        except av.FFmpegError:
+            bad += 1
+            continue
+        good += 1
+        yield from frames
+    if bad:
+        logging.getLogger(__name__).warning("%d بسته خراب در %s رد شد", bad, stream.type)
+    if bad and not good:
+        raise AudioError("هیچ بخشی از این ترک خوانده نشد؛ فایل احتمالاً خراب است")
+
+
 @dataclass
 class MediaInfo:
     has_audio: bool
     duration: float
     audio_codec: str = ""
     video_codec: str = ""
+    width: int = 0
+    height: int = 0
 
 
 def probe(path: str | Path) -> MediaInfo:
@@ -49,16 +80,27 @@ def probe(path: str | Path) -> MediaInfo:
                 duration=duration,
                 audio_codec=audio.codec_context.name if audio else "",
                 video_codec=video.codec_context.name if video else "",
+                width=int(video.codec_context.width or 0) if video else 0,
+                height=int(video.codec_context.height or 0) if video else 0,
             )
     except Exception as error:
         raise AudioError(f"فایل قابل خواندن نیست: {error}") from error
 
 
-def extract_wav(source: str | Path, target: str | Path, sample_rate: int = SAMPLE_RATE) -> Path:
+def extract_wav(
+    source: str | Path,
+    target: str | Path,
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+) -> Path:
     """Pull a 16 kHz mono WAV out of any container.
 
     whisper-cli reads flac/mp3/ogg/wav only -- hand it an mp4 or mkv and it
     simply refuses. PyAV does the demux and resample, so no ffmpeg.exe needed.
+
+    `checkpoint` runs once per decoded frame; raising from it stops the
+    decode. A two hour file takes long enough to be worth cancelling.
     """
     import av
 
@@ -77,18 +119,29 @@ def extract_wav(source: str | Path, target: str | Path, sample_rate: int = SAMPL
             resampler = av.audio.resampler.AudioResampler(
                 format="s16", layout="mono", rate=sample_rate
             )
-            for frame in container.decode(stream):
+            for frame in decode_tolerant(container, stream, checkpoint):
                 for resampled in resampler.resample(frame):
                     resampled.pts = None
                     for packet in out_stream.encode(resampled):
                         out.mux(packet)
+            # The resampler holds back the last few milliseconds until it is
+            # told the input has ended.
+            for resampled in resampler.resample(None):
+                resampled.pts = None
+                for packet in out_stream.encode(resampled):
+                    out.mux(packet)
             for packet in out_stream.encode(None):
                 out.mux(packet)
 
     return dst
 
 
-def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
+def energy_envelope(
+    path: str | Path,
+    bin_ms: int = BIN_MS,
+    *,
+    checkpoint: Callable[[], None] | None = None,
+):
     """RMS loudness per time bin, as a numpy array."""
     import av
     import numpy as np
@@ -105,8 +158,9 @@ def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
         resampler = av.audio.resampler.AudioResampler(
             format="flt", layout="mono", rate=SAMPLE_RATE
         )
-        for frame in container.decode(stream):
-            for resampled in resampler.resample(frame):
+        def take(frames) -> None:
+            nonlocal carry
+            for resampled in frames:
                 chunk = resampled.to_ndarray().reshape(-1).astype(np.float32)
                 carry = np.concatenate((carry, chunk)) if carry.size else chunk
                 usable = (carry.size // samples_per_bin) * samples_per_bin
@@ -114,6 +168,10 @@ def energy_envelope(path: str | Path, bin_ms: int = BIN_MS):
                     block = carry[:usable].reshape(-1, samples_per_bin)
                     bins.extend(np.sqrt((block**2).mean(axis=1)).tolist())
                     carry = carry[usable:]
+
+        for frame in decode_tolerant(container, stream, checkpoint):
+            take(resampler.resample(frame))
+        take(resampler.resample(None))  # the tail the resampler held back
 
     if carry.size:
         bins.append(float(np.sqrt((carry**2).mean())))

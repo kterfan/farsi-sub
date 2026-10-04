@@ -106,12 +106,13 @@ def main() -> int:
         print("فایل خروجی ساخته نشد", file=sys.stderr)
         return 1
 
-    # Install it where the app looks for models.
-    import os
+    # Install it where the app looks for models. This used to be a hard-coded
+    # %LOCALAPPDATA%\FarsiSub\models, which the app stopped reading when its
+    # data moved beside the program: the converted model never showed up.
+    sys.path.insert(0, str(ROOT / "src"))
+    from farsisub.engine import locate
 
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    target = Path(base) / "FarsiSub" / "models" / f"ggml-{args.name}.bin"
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target = locate.models_dir() / f"ggml-{args.name}.bin"
     shutil.move(str(produced), target)
     print(f"\nآماده است: {target}  ({target.stat().st_size / 1e9:.2f} GB)")
     print(f"در برنامه با نام «{args.name}» انتخاب می‌شود.")

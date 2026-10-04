@@ -138,6 +138,12 @@ def download(
         return target
 
     partial = target.with_suffix(target.suffix + ".part")
+    # A download that finished but was never renamed (the app closed at that
+    # very moment): asking the server for the bytes after the end gets a 416,
+    # every mirror fails the same way, and the model could never be installed.
+    if expected_size and partial.exists() and partial.stat().st_size == expected_size:
+        partial.replace(target)
+        return target
     if expected_size:
         needed = expected_size - (partial.stat().st_size if partial.exists() else 0)
         if free_space(target.parent) < needed + (100 << 20):

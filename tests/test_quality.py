@@ -62,7 +62,7 @@ def test_subtitle_covers_the_speech_timeline():
 
 
 def test_no_cue_is_unreadably_fast_or_flashed():
-    for name in ("sentence", "smart", "reels"):
+    for name in ("sentence", "smart", "reels", "word"):
         cues = cues_for(name)
         if cues is None:
             return
@@ -76,7 +76,7 @@ def test_no_cue_is_unreadably_fast_or_flashed():
 
 
 def test_cues_never_overlap():
-    for name in ("sentence", "smart", "reels"):
+    for name in ("sentence", "smart", "reels", "word"):
         cues = cues_for(name)
         if cues is None:
             return
@@ -86,7 +86,7 @@ def test_cues_never_overlap():
 
 def test_no_line_starts_with_a_stranded_word():
     stranded = {"رو", "را", "و", "هم", "تر", "ترین", "ها", "های"}
-    for name in ("smart", "reels"):
+    for name in ("smart", "reels", "word"):
         cues = cues_for(name)
         if cues is None:
             return
@@ -119,3 +119,18 @@ def test_switching_profile_keeps_the_same_words():
 
     # Reels cuts differently, but must not invent or drop content.
     assert abs(len(words(smart)) - len(words(reels))) <= 2
+
+
+def test_word_style_shows_one_word_at_a_time_and_loses_none():
+    project = reference_project()
+    cues = cues_for("word")
+    if project is None or cues is None:
+        return
+    singles = sum(1 for cue in cues if len(cue.text.split()) == 1)
+    assert singles >= len(cues) * 0.6, f"only {singles} of {len(cues)} cues are one word"
+    smart = cues_for("smart")
+
+    def words(cues):
+        return " ".join(c.text for c in cues).split()
+
+    assert abs(len(words(cues)) - len(words(smart))) <= 2

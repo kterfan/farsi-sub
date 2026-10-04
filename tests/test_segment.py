@@ -186,3 +186,39 @@ def test_line_break_does_not_leave_a_dangling_preposition():
     lines = wrap_lines(text, SMART)
     for line in lines[:-1]:
         assert line.split()[-1] not in {"به", "با", "از", "در", "برای"}
+
+
+WORD = BUILTIN_PROFILES["word"]
+
+
+def _spaced(text: str, step: float = 0.5) -> list[Word]:
+    return [Word(text=t, start=i * step, end=i * step + step * 0.8) for i, t in enumerate(text.split())]
+
+
+def test_word_style_gives_each_word_its_own_cue():
+    cues = build_cues(_spaced("امروز درباره بحران حرف زدیم"), WORD, RULES)
+    assert [c.text for c in cues] == ["امروز", "درباره", "بحران", "حرف", "زدیم"]
+    for first, second in zip(cues, cues[1:]):
+        assert first.end <= second.start + 1e-9
+
+
+def test_word_style_keeps_leaning_words_with_their_host():
+    cues = build_cues(_spaced("کتاب ها رو باید جمع کنی"), WORD, RULES)
+    texts = [c.text for c in cues]
+    assert not any(t.split()[0] in {"ها", "رو", "کنی"} for t in texts), texts
+    assert "جمع کنی" in texts
+
+
+def test_word_style_glues_a_word_too_fast_to_read():
+    words = _spaced("یک دو سه")
+    words[1] = Word(text="دو", start=0.5, end=0.6)
+    words[2] = Word(text="سه", start=0.6, end=1.0)
+    cues = build_cues(words, WORD, RULES)
+    assert all(c.duration >= 0.25 for c in cues)
+    assert " ".join(c.text for c in cues).split() == ["یک", "دو", "سه"]
+
+
+def test_word_style_does_not_glue_across_a_sentence_end():
+    words = _spaced("تموم شد. رو")
+    cues = build_cues(words, WORD, RULES)
+    assert cues[-1].text == "رو"

@@ -6,14 +6,14 @@ stay left-to-right because that is how they are actually read.
 
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTime, QUrl
+from PySide6.QtCore import QPointF, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -24,6 +24,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -31,11 +34,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config import BUILTIN_PROFILES, AppConfig
+from .. import brand
+from ..config import BUILTIN_PROFILES, OUTPUT_FORMATS, AppConfig, save_settings
 from ..engine import locate, modelstore
 from . import theme
 from .editor import EditorDialog
 from ..text.normalize import to_persian_digits
+from .widgets import ActionButton, ResponsiveRow, ToggleSwitch, refresh_icons
 from .worker import Job, TranscribeWorker
 
 log = logging.getLogger(__name__)
@@ -53,6 +58,19 @@ MEDIA_FILTER = (
 )
 
 
+def format_duration(seconds: float) -> str:
+    """"۰۵:۰۷" or "۱:۰۵:۰۷", in Persian digits.
+
+    QTime's mm:ss wrapped after an hour -- a 65-minute estimate read "05:00"
+    -- and raised on a huge first estimate.
+    """
+    total = max(0, int(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    text = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+    return to_persian_digits(text)
+
+
 def media_paths(urls) -> list[Path]:
     """The files in a drop that this program can actually read."""
     paths = [Path(url.toLocalFile()) for url in urls if url.isLocalFile()]
@@ -62,6 +80,74 @@ STATUS_QUEUED = "در صف"
 STATUS_RUNNING = "در حال پردازش"
 STATUS_DONE = "آماده"
 STATUS_FAILED = "خطا"
+STATUS_CANCELLED = "لغو شد"
+
+# What the start button picks up: a file that failed or was stopped is worth
+# another try when the user asks for one.
+STARTABLE = (STATUS_QUEUED, STATUS_FAILED, STATUS_CANCELLED)
+
+
+class StatusDelegate(QStyledItemDelegate):
+    """The status column as a coloured pill: a dot, a word, a tint.
+
+    Plain coloured text was readable but looked like an afterthought next
+    to everything else; the pill reads at a glance down a long queue.
+    """
+
+    LOOKS = {
+        STATUS_QUEUED: ("text_muted", "surface_alt"),
+        STATUS_DONE: ("ok", "ok_soft"),
+        STATUS_FAILED: ("danger", "danger_soft"),
+        STATUS_CANCELLED: ("warn", "warn_soft"),
+    }
+
+    def paint(self, painter, option, index):  # noqa: N802 - Qt naming
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor
+
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.text = ""
+        widget = option.widget
+        widget.style().drawControl(QStyle.CE_ItemViewItem, background, painter, widget)
+
+        text = index.data() or ""
+        if not text or text == STATUS_RUNNING:
+            return  # the row's own progress bar sits there
+        tokens = theme.tokens_for(widget)
+        ink, tint = self.LOOKS.get(text, ("text_muted", "surface_alt"))
+        font = option.font
+        font.setPointSizeF(theme.FONT_SMALL)
+        font.setWeight(font.Weight.DemiBold)
+        from PySide6.QtGui import QFontMetrics
+
+        metrics = QFontMetrics(font)
+        dot, gap, pad = 6, 6, 10
+        width = pad + dot + gap + metrics.horizontalAdvance(text) + pad
+        height = 24
+        rect = option.rect
+        rtl = option.direction == Qt.RightToLeft
+        left = rect.right() - 8 - width if rtl else rect.left() + 8
+        pill = QRectF(left, rect.center().y() - height / 2 + 1, width, height)
+
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(getattr(tokens, tint)))
+        painter.drawRoundedRect(pill, height / 2, height / 2)
+        colour = QColor(getattr(tokens, ink))
+        painter.setBrush(colour)
+        dot_x = pill.right() - pad - dot if rtl else pill.left() + pad
+        painter.drawEllipse(QRectF(dot_x, pill.center().y() - dot / 2, dot, dot))
+        painter.setPen(colour)
+        painter.setFont(font)
+        text_rect = (
+            QRectF(pill.left() + pad, pill.top(), width - 2 * pad - dot - gap, height)
+            if rtl
+            else QRectF(pill.left() + pad + dot + gap, pill.top(), width - 2 * pad - dot - gap, height)
+        )
+        painter.drawText(text_rect, Qt.AlignCenter, text)
+        painter.restore()
 
 
 class AppMark(QWidget):
@@ -77,26 +163,11 @@ class AppMark(QWidget):
         self.setFixedSize(size, size)
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
-        from PySide6.QtGui import QColor, QPainter, QPainterPath
+        from PySide6.QtGui import QPainter
 
+        # The same mark as the icon, the installer and the tray: one drawing.
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        box = self.rect().adjusted(0, 0, -1, -1)
-
-        tile = QPainterPath()
-        tile.addRoundedRect(box, theme.RADIUS, theme.RADIUS)
-        painter.fillPath(tile, QColor(theme.DARK.accent))
-
-        # Two subtitle lines, the shorter one centred underneath.
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(theme.DARK.accent_text))
-        unit = self._size / 10
-        painter.drawRoundedRect(
-            QRectF(unit * 2, unit * 5.4, unit * 6, unit * 0.9), unit * 0.45, unit * 0.45
-        )
-        painter.drawRoundedRect(
-            QRectF(unit * 3.2, unit * 7.1, unit * 3.6, unit * 0.9), unit * 0.45, unit * 0.45
-        )
+        brand.paint_logo(painter, self._size)
         painter.end()
 
 
@@ -114,7 +185,7 @@ class DropGlyph(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         unit = self._size / 16
-        pen = QPen(QColor(theme.DARK.text_muted))
+        pen = QPen(QColor(theme.active.text_muted))
         pen.setWidthF(unit * 0.9)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
@@ -164,7 +235,8 @@ class DropZone(QFrame):
         layout.addWidget(hint)
 
         pick = QPushButton("انتخاب فایل")
-        pick.setObjectName("Primary")
+        pick.setObjectName("Hero")
+        pick.setCursor(Qt.PointingHandCursor)
         pick.clicked.connect(self.choose_files)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -224,6 +296,12 @@ class MainWindow(QMainWindow):
         # Kept so the editor can reopen the last result without re-running.
         self.last_project = None
         self.running_path: Path | None = None
+        # Set by cancel: the queue stops after the current file instead of
+        # moving on to the next one.
+        self.stop_requested = False
+        # The icon beside the clock, set by the app once the window exists.
+        self.tray = None
+        self.done_in_run = 0
 
         self.setWindowTitle("FarsiSub — زیرنویس فارسی")
         self.setLayoutDirection(Qt.RightToLeft)
@@ -246,23 +324,26 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._options())
         layout.addWidget(self._work_surface(), stretch=1)
         layout.addWidget(self._footer())
+        layout.addWidget(self._credit())
 
         self.setCentralWidget(root)
         self._shortcuts()
 
     def _header(self) -> QWidget:
-        """Name, one line of promise, and the engine state as a chip.
+        """Name, one line of promise, the engine state as chips, and the
+        three things that are not about the current file.
 
-        The old header was a single bold sentence in a corner: nothing said
-        which program this was, and the engine state read as an afterthought.
+        A wrapping row: on a narrow window the chips and buttons move to a
+        second line instead of pushing each other out of the window.
         """
-        box = QWidget()
-        row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, theme.SPACE)
-        row.setSpacing(theme.SPACE * 3)
+        row = ResponsiveRow(spacing=theme.SPACE * 2)
 
-        row.addWidget(AppMark())
-
+        brand_box = QWidget()
+        brand_box.setObjectName("Bare")
+        brand_row = QHBoxLayout(brand_box)
+        brand_row.setContentsMargins(0, 0, theme.SPACE * 2, 0)
+        brand_row.setSpacing(theme.SPACE * 3)
+        brand_row.addWidget(AppMark(44))
         names = QVBoxLayout()
         names.setSpacing(0)
         title = QLabel("FarsiSub")
@@ -271,85 +352,142 @@ class MainWindow(QMainWindow):
         subtitle.setObjectName("Muted")
         names.addWidget(title)
         names.addWidget(subtitle)
-        row.addLayout(names)
+        brand_row.addLayout(names)
+        row.add(brand_box)
 
-        row.addStretch(1)
+        row.add_stretch()
+        # Chips and buttons travel together: when the row wraps they move to
+        # the next line as one block instead of leaving one icon stranded.
+        tools = QWidget()
+        tools.setObjectName("Bare")
+        tools_row = QHBoxLayout(tools)
+        tools_row.setContentsMargins(0, 0, 0, 0)
+        tools_row.setSpacing(theme.SPACE * 2)
+        row.add(tools)
+        # What the engine runs on, so a slow run is not a mystery.
+        self.hardware_label = QLabel("GPU انویدیا" if locate.has_cuda() else "CPU")
+        self.hardware_label.setObjectName("Chip")
+        self.hardware_label.setToolTip(
+            "موتور با شتاب‌دهنده انویدیا ساخته شده؛ اگر کارت یا درایور نباشد خودش روی CPU می‌رود"
+            if locate.has_cuda()
+            else "پردازش روی CPU انجام می‌شود — کندتر ولی روی هر سیستمی کار می‌کند"
+        )
+        tools_row.addWidget(self.hardware_label)
         self.engine_label = QLabel()
         self.engine_label.setObjectName("Chip")
-        row.addWidget(self.engine_label)
-        return box
+        tools_row.addWidget(self.engine_label)
+
+        self.theme_button = ActionButton("", "sun", name="Quiet", icon_only=True)
+        self.theme_button.clicked.connect(self.toggle_theme)
+        self._sync_theme_button()
+        tools_row.addSpacing(theme.SPACE)
+        tools_row.addWidget(self.theme_button)
+
+        self.settings_button = ActionButton("تنظیمات", "sliders", name="Quiet", priority=1)
+        self.settings_button.setToolTip("طول خط، زمان نمایش، حساسیت کلمه کلیدی، ظاهر زیرنویس")
+        self.settings_button.clicked.connect(self.open_settings)
+        tools_row.addWidget(self.settings_button)
+
+        self.about_button = ActionButton("درباره", "info", name="Quiet", icon_only=True)
+        self.about_button.setToolTip("نسخه، سازنده و لینک پروژه")
+        self.about_button.clicked.connect(self.open_about)
+        tools_row.addWidget(self.about_button)
+        return row
+
+    def _credit(self) -> QLabel:
+        """Who made it, quietly, under everything else."""
+        label = QLabel(
+            f"ساخته‌ی {brand.AUTHOR_FA} · {brand.AUTHOR_EN} · "
+            f'<a href="{brand.REPO_URL}" style="color:inherit">{brand.REPO_LABEL}</a>'
+        )
+        label.setObjectName("Muted")
+        label.setOpenExternalLinks(True)
+        label.setAlignment(Qt.AlignCenter)
+        # Allowed to wrap, or this one line set the narrowest the window
+        # could ever be.
+        label.setWordWrap(True)
+        self.credit_label = label
+        return label
+
+    def open_about(self) -> None:
+        from .about_dialog import AboutDialog
+
+        AboutDialog(self).exec()
+
+    def bring_to_front(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _options(self) -> QWidget:
         card = QFrame()
         card.setObjectName("Card")
-        row = QHBoxLayout(card)
-        row.setContentsMargins(theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3)
-        row.setSpacing(theme.SPACE * 3)
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(theme.SPACE * 4, theme.SPACE * 3, theme.SPACE * 4, theme.SPACE * 3)
+        # The fields wrap onto a second line on a narrow window rather than
+        # setting a minimum width the whole window has to respect.
+        row = ResponsiveRow(spacing=theme.SPACE * 4)
+        outer.addWidget(row)
 
         self.profile_box = QComboBox()
-        for name, profile in BUILTIN_PROFILES.items():
-            self.profile_box.addItem(profile.label, name)
-        self.profile_box.setCurrentIndex(
-            self.profile_box.findData(self.config.profile.name)
-        )
+        self._fill_profiles()
         self.profile_box.currentIndexChanged.connect(self._profile_changed)
+
+        self.format_box = QComboBox()
+        for fmt in OUTPUT_FORMATS:
+            self.format_box.addItem(fmt.upper(), fmt)
+        self.format_box.setToolTip(
+            "SRT برای همه پلیرها و ادیتورها؛ ASS با فونت و رنگ؛ VTT برای وب؛ TXT فقط متن"
+        )
+        self.format_box.setCurrentIndex(max(0, self.format_box.findData(self.config.output_format)))
+        self.format_box.currentIndexChanged.connect(self._format_changed)
 
         self.model_box = QComboBox()
         self.model_box.currentIndexChanged.connect(self._model_changed)
 
         # Two models, second one only for the gaps. Costs a second pass.
-        self.merge_box = QCheckBox("ترکیب دو مدل")
+        self.merge_box = ToggleSwitch("ترکیب دو مدل")
         self.merge_box.setToolTip(
             "مدل دوم فقط جاهایی را می‌نویسد که مدل اول ساکت مانده. "
             "دقیق‌تر است ولی زمان پردازش دو برابر می‌شود."
         )
-        self.merge_box.toggled.connect(self._merge_toggled)
+        self.merge_box.setChecked(bool(self.config.merge_model))
+        self.merge_box.toggled.connect(self._merge_clicked)
 
-        self.digits_box = QCheckBox("ارقام فارسی")
+        self.digits_box = ToggleSwitch("ارقام فارسی")
         self.digits_box.setChecked(self.config.text.persian_digits)
-        self.digits_box.toggled.connect(
-            lambda on: setattr(self.config.text, "persian_digits", on)
-        )
+        self.digits_box.toggled.connect(self._digits_toggled)
 
-        self.period_box = QCheckBox("نقطه انتهای جمله")
+        self.period_box = ToggleSwitch("نقطه انتهای جمله")
         self.period_box.setChecked(not self.config.text.strip_final_period)
-        self.period_box.toggled.connect(
-            lambda on: setattr(self.config.text, "strip_final_period", not on)
-        )
+        self.period_box.toggled.connect(self._period_toggled)
 
-        def field(caption: str, widget) -> QVBoxLayout:
-            """A control with its label above it, not floating beside it."""
-            column = QVBoxLayout()
-            column.setSpacing(theme.SPACE)
+        def field(caption: str, *widgets) -> QWidget:
+            """Controls with their label above them, not floating beside."""
+            box = QWidget()
+            box.setObjectName("Bare")
+            column = QVBoxLayout(box)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(theme.SPACE + 2)
             label = QLabel(caption)
             label.setObjectName("Caption")
             column.addWidget(label)
-            column.addWidget(widget)
-            return column
+            if len(widgets) == 1:
+                column.addWidget(widgets[0])
+            else:
+                line = QHBoxLayout()
+                line.setSpacing(theme.SPACE * 5)
+                for widget in widgets:
+                    line.addWidget(widget)
+                column.addLayout(line)
+            return box
 
-        row.addLayout(field("سبک زیرنویس", self.profile_box))
-        row.addLayout(field("مدل", self.model_box))
-
-        line = QFrame()
-        line.setFrameShape(QFrame.VLine)
-        line.setObjectName("Divider")
-        line.setFixedWidth(1)
-        row.addWidget(line)
-
-        switches = QVBoxLayout()
-        switches.setSpacing(theme.SPACE)
-        caption = QLabel("گزینه‌ها")
-        caption.setObjectName("Caption")
-        switches.addWidget(caption)
-        boxes = QHBoxLayout()
-        boxes.setSpacing(theme.SPACE * 4)
-        boxes.addWidget(self.merge_box)
-        boxes.addWidget(self.digits_box)
-        boxes.addWidget(self.period_box)
-        switches.addLayout(boxes)
-        row.addLayout(switches)
-
-        row.addStretch(1)
+        self.profile_box.setMinimumWidth(150)
+        self.model_box.setMinimumWidth(170)
+        row.add(field("سبک زیرنویس", self.profile_box))
+        row.add(field("مدل", self.model_box))
+        row.add(field("قالب خروجی", self.format_box))
+        row.add(field("گزینه‌ها", self.merge_box, self.digits_box, self.period_box))
         return card
 
     def _work_surface(self) -> QWidget:
@@ -362,6 +500,7 @@ class MainWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("Card")
         theme.elevate(card)
+        self.work_card = card
         column = QVBoxLayout(card)
         column.setContentsMargins(theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3)
         column.setSpacing(theme.SPACE * 2)
@@ -384,21 +523,23 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(theme.ROW_HEIGHT)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
+        self.table.setAlternatingRowColors(False)
         self.table.setShowGrid(False)
+        self.table.setFrameShape(QFrame.NoFrame)
+        self.table.verticalHeader().setDefaultSectionSize(theme.ROW_HEIGHT + 8)
+        self.table.horizontalHeader().setHighlightSections(False)
+        self.table.setItemDelegateForColumn(1, StatusDelegate(self.table))
         self.table.itemDoubleClicked.connect(self._row_double_clicked)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        # Fixed: the progress bar of the running file needs the room, and a
+        # column that resized to its text squeezed it to a dot.
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.table.setColumnWidth(1, 170)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         return self.table
 
     def _footer(self) -> QWidget:
-        box = QWidget()
-        row = QHBoxLayout(box)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(theme.SPACE * 2)
-
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -409,58 +550,62 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("آماده")
         self.status_label.setObjectName("Muted")
 
-        self.start_button = QPushButton("شروع رونویسی")
-        self.start_button.setObjectName("Primary")
+        self.start_button = ActionButton("شروع رونویسی", "play", name="Primary", collapsible=False)
+        self.start_button.setToolTip("همه فایل‌های در صف را به ترتیب رونویسی می‌کند — Ctrl+Enter")
         self.start_button.clicked.connect(self.start_queue)
 
-        self.cancel_button = QPushButton("لغو")
-        self.cancel_button.setObjectName("Danger")
+        self.cancel_button = ActionButton("لغو", "stop", name="Danger", priority=2)
+        self.cancel_button.setToolTip("پردازش فایل جاری را متوقف می‌کند")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
 
-        self.edit_button = QPushButton("ویرایش زیرنویس")
+        self.edit_button = ActionButton("ویرایش زیرنویس", "pencil", priority=3)
         self.edit_button.setEnabled(False)
         self.edit_button.setToolTip("اصلاح کلمات و جابه‌جایی خط‌ها، بدون خراب شدن زمان‌ها")
         self.edit_button.clicked.connect(self.open_editor)
 
-        self.open_button = QPushButton("باز کردن پوشه")
+        # Seven buttons of equal weight told the eye nothing. The one action
+        # that matters keeps its colour; the rest go quiet, and the progress
+        # bar is a hairline over them instead of an empty pill.
+        self.open_button = ActionButton("باز کردن پوشه", "folder", name="Quiet", priority=2)
+        self.open_button.setToolTip("پوشه‌ای که زیرنویس در آن ذخیره شد")
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self.open_output_folder)
 
         # Running the same file again with another model or style is the normal
         # way to work, not an edge case.
-        self.again_button = QPushButton("پردازش دوباره")
+        self.again_button = ActionButton("پردازش دوباره", "refresh", name="Quiet", priority=1)
+        self.again_button.setToolTip("همان فایل‌ها با تنظیمات تازه — Ctrl+R")
         self.again_button.setEnabled(False)
         self.again_button.clicked.connect(self.requeue)
 
-        self.clear_button = QPushButton("پاک کردن صف")
+        self.clear_button = ActionButton("پاک کردن صف", "clear", name="Quiet", priority=1)
+        self.clear_button.setToolTip("فهرست را خالی می‌کند؛ فایل‌ها پاک نمی‌شوند — Ctrl+Shift+X")
         self.clear_button.setEnabled(False)
         self.clear_button.clicked.connect(self.clear_queue)
 
-        # Seven buttons of equal weight told the eye nothing. The one action
-        # that matters keeps its colour; the rest go quiet, and the progress
-        # bar is a hairline over them instead of an empty pill.
-        for quiet in (self.clear_button, self.again_button, self.open_button):
-            quiet.setObjectName("Quiet")
-
         box = QWidget()
+        box.setObjectName("Bare")
         column = QVBoxLayout(box)
         column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(theme.SPACE * 2)
+        column.setSpacing(theme.SPACE * 3)
         column.addWidget(self.progress)
 
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(theme.SPACE * 2)
-        row.addWidget(self.status_label)
-        row.addStretch(1)
-        row.addWidget(self.clear_button)
-        row.addWidget(self.again_button)
-        row.addWidget(self.open_button)
-        row.addWidget(self.edit_button)
-        row.addWidget(self.cancel_button)
-        row.addWidget(self.start_button)
-        column.addLayout(row)
+        # Wraps, and drops the quiet buttons' labels first, instead of
+        # forcing the window wider than a laptop screen.
+        row = ResponsiveRow(spacing=theme.SPACE * 2)
+        row.add(self.status_label)
+        row.add_stretch()
+        for button in (
+            self.clear_button,
+            self.again_button,
+            self.open_button,
+            self.edit_button,
+            self.cancel_button,
+            self.start_button,
+        ):
+            row.add(button)
+        column.addWidget(row)
         return box
 
     def _shortcuts(self) -> None:
@@ -506,7 +651,7 @@ class MainWindow(QMainWindow):
             # A Latin name inside a right-to-left table gets reordered by the
             # bidi algorithm -- "5.wav" came out as "wav.5". The isolate marks
             # pin it down.
-            name_item = QTableWidgetItem(f"⁦{path.name}⁩")
+            name_item = QTableWidgetItem(f"\u2066{path.name}\u2069")  # LRI ... PDI
             # File names are usually Latin: pin them to the visual left even
             # though the window itself is right-to-left.
             name_item.setTextAlignment(Qt.AlignLeft | Qt.AlignAbsolute | Qt.AlignVCenter)
@@ -556,16 +701,78 @@ class MainWindow(QMainWindow):
         self._show_queue()  # an empty queue means the invitation comes back
         self._update_buttons()
 
+    def _fill_profiles(self) -> None:
+        self.profile_box.blockSignals(True)
+        self.profile_box.clear()
+        for name, profile in BUILTIN_PROFILES.items():
+            self.profile_box.addItem(profile.label, name)
+        if self.config.custom_profile is not None:
+            self.profile_box.addItem(self.config.custom_profile.label, self.config.custom_profile.name)
+        self.profile_box.setCurrentIndex(max(0, self.profile_box.findData(self.config.profile.name)))
+        self.profile_box.blockSignals(False)
+
     def _profile_changed(self, index: int) -> None:
         name = self.profile_box.itemData(index)
-        if name:
-            self.config.profile = BUILTIN_PROFILES[name]
+        if name in BUILTIN_PROFILES:
+            self.config.profile = copy.deepcopy(BUILTIN_PROFILES[name])
+        elif self.config.custom_profile is not None and name == self.config.custom_profile.name:
+            self.config.profile = copy.deepcopy(self.config.custom_profile)
+        self.save_settings()
+
+    def _format_changed(self, index: int) -> None:
+        fmt = self.format_box.itemData(index)
+        if fmt in OUTPUT_FORMATS:
+            self.config.output_format = fmt
+            self.save_settings()
+
+    def _digits_toggled(self, on: bool) -> None:
+        self.config.text.persian_digits = on
+        self.save_settings()
+
+    def _period_toggled(self, on: bool) -> None:
+        self.config.text.strip_final_period = not on
+        self.save_settings()
+
+    def save_settings(self) -> None:
+        """Every choice is kept, so the next start opens the way this one ended."""
+        save_settings(self.config)
+
+    def _sync_theme_button(self) -> None:
+        dark = self.config.theme == "dark"
+        self.theme_button.setText("تم روشن" if dark else "تم تیره")
+        self.theme_button.setToolTip("به تم روشن برو" if dark else "به تم تیره برو")
+        self.theme_button.set_icon("sun" if dark else "moon")
+
+    def toggle_theme(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        self.config.theme = "light" if self.config.theme == "dark" else "dark"
+        theme.apply(QApplication.instance(), self.config.theme)
+        self._sync_theme_button()
+        refresh_icons(self)
+        theme.elevate(self.work_card)
+        # Painted widgets and coloured cells read the palette when drawn.
+        for row in range(self.table.rowCount()):
+            self._paint_status(self.table.item(row, 1))
+        self.update()
+        for child in self.findChildren(QWidget):
+            child.update()
+        self.save_settings()
+
+    def open_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.config, self)
+        if dialog.exec():
+            self._fill_profiles()
+            self.save_settings()
 
     def _model_changed(self, index: int) -> None:
         name = self.model_box.itemData(index)
         if name:
             self.config.model_name = name
         self._merge_toggled(self.merge_box.isChecked())
+        self.save_settings()
 
     def _merge_toggled(self, enabled: bool) -> None:
         """Pick the other installed model as the gap filler."""
@@ -577,6 +784,10 @@ class MainWindow(QMainWindow):
             self.config.merge_model = None
             self.merge_box.setText("ترکیب دو مدل")
         self.merge_box.setEnabled(bool(others))
+
+    def _merge_clicked(self, enabled: bool) -> None:
+        self._merge_toggled(enabled)
+        self.save_settings()
 
     def _refresh_model_state(self) -> None:
         installed = locate.installed_models()
@@ -606,7 +817,7 @@ class MainWindow(QMainWindow):
         if binary and installed:
             self.engine_label.setObjectName("ChipOk")
             count = to_persian_digits(str(len(installed)))
-            self.engine_label.setText(f"موتور آماده · {count} مدل")
+            self.engine_label.setText(f"موتور آماده — {count} مدل")
         else:
             self.engine_label.setObjectName("Chip")
             self.engine_label.setText("موتور آماده نیست" if not binary else "مدلی نصب نیست")
@@ -619,7 +830,7 @@ class MainWindow(QMainWindow):
     def _update_buttons(self) -> None:
         idle = self.job is None
         pending = any(
-            self.table.item(row, 1).text() in (STATUS_QUEUED, STATUS_FAILED)
+            self.table.item(row, 1).text() in STARTABLE
             for row in range(self.table.rowCount())
         )
         self.start_button.setEnabled(idle and pending and bool(locate.installed_models()))
@@ -644,8 +855,13 @@ class MainWindow(QMainWindow):
         """Colour carries the state, so the column can be read at a glance."""
         from PySide6.QtGui import QBrush, QColor
 
+        if item.text() == STATUS_RUNNING:
+            # The row's progress bar sits on top; the words must not show
+            # through around it.
+            item.setForeground(QBrush(QColor(0, 0, 0, 0)))
+            return
         token = self.STATUS_COLOURS.get(item.text(), "text_muted")
-        item.setForeground(QBrush(QColor(getattr(theme.DARK, token))))
+        item.setForeground(QBrush(QColor(getattr(theme.active, token))))
 
     def _set_status(self, path: Path, status: str, output: str = "") -> None:
         row = self._row_for(path)
@@ -654,20 +870,62 @@ class MainWindow(QMainWindow):
         self._paint_status(item)
         if output:
             self.table.item(row, 2).setText(output)
+        if status == STATUS_RUNNING:
+            # The row itself shows how far it got, so a long queue reads at
+            # a glance. The status text stays underneath for the queue logic.
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)  # the label squeezed the bar to a dot
+            bar.setObjectName("RowProgress")
+            bar.setLayoutDirection(Qt.LeftToRight)
+            self.table.setCellWidget(row, 1, bar)
+        else:
+            self.table.removeCellWidget(row, 1)
+
+    def _row_progress(self, percent: int) -> None:
+        if self.running_path is None or self.running_path not in self.queue:
+            return
+        bar = self.table.cellWidget(self._row_for(self.running_path), 1)
+        if isinstance(bar, QProgressBar):
+            bar.setValue(percent)
+            bar.setToolTip(to_persian_digits(f"{percent}٪"))
 
     # ---------------------------------------------------------------- queue
 
-    def start_queue(self) -> None:
-        if self.job is not None:
-            return
-        pending = [
+    def _pending(self, statuses: tuple[str, ...]) -> list[Path]:
+        return [
             path
             for i, path in enumerate(self.queue)
-            if self.table.item(i, 1).text() in (STATUS_QUEUED, STATUS_FAILED)
+            if self.table.item(i, 1).text() in statuses
         ]
-        if not pending:
+
+    def start_queue(self) -> None:
+        """The start button: everything waiting, plus what failed or was stopped."""
+        if self.job is not None:
             return
-        self._run(pending[0])
+        self.stop_requested = False
+        pending = self._pending(STARTABLE)
+        if pending:
+            self.done_in_run = 0
+            self._run(pending[0])
+
+    def _continue_queue(self) -> None:
+        """After a file ends: only files still waiting, never a retry.
+
+        Picking failed files up here too meant a cancelled file started over
+        straight away, and a file that always fails (no audio track, a broken
+        container) ran again and again, an error box each time.
+        """
+        if self.stop_requested:
+            self.stop_requested = False
+            return
+        if self.job is not None:
+            return
+        pending = self._pending((STATUS_QUEUED,))
+        if pending:
+            self._run(pending[0])
+        elif self.tray is not None and self.done_in_run > 1:
+            self.tray.queue_done(self.done_in_run)
 
     def _run(self, path: Path) -> None:
         self.started_at = time.time()
@@ -679,7 +937,9 @@ class MainWindow(QMainWindow):
         # thread, and need it.
         self.running_path = path
 
-        worker = TranscribeWorker(path, self.config)
+        # A copy: the worker reads the settings on its own thread for minutes,
+        # and a switch flipped meanwhile must not land halfway through a file.
+        worker = TranscribeWorker(path, copy.deepcopy(self.config), suffix=self.config.suffix)
         # Bound methods with `self` as receiver, and QueuedConnection spelled
         # out. A lambda here has no receiver object, so Qt runs it on the
         # WORKER thread -- and touching a widget from there crashes the process
@@ -687,6 +947,7 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._on_progress, Qt.QueuedConnection)
         worker.finished.connect(self._on_finished, Qt.QueuedConnection)
         worker.failed.connect(self._on_failed, Qt.QueuedConnection)
+        worker.stopped.connect(self._on_cancelled, Qt.QueuedConnection)
 
         job = Job(worker)
         # Clean-up and the next queue item wait for the THREAD, not the worker.
@@ -697,12 +958,13 @@ class MainWindow(QMainWindow):
 
     def _on_progress(self, percent: int) -> None:
         self.progress.setValue(percent)
+        self._row_progress(percent)
+        if self.tray is not None and self.running_path is not None:
+            self.tray.working(self.running_path.name, percent)
         if percent > 2:
             elapsed = time.time() - self.started_at
             remaining = elapsed * (100 - percent) / percent
-            self.status_label.setText(
-                "باقی‌مانده حدود " + QTime(0, 0).addSecs(int(remaining)).toString("mm:ss")
-            )
+            self.status_label.setText("باقی‌مانده حدود " + format_duration(remaining))
 
     def _on_finished(self, project, output) -> None:
         """Runs on the GUI thread, after the worker signals success."""
@@ -716,14 +978,27 @@ class MainWindow(QMainWindow):
         self.edit_button.setEnabled(True)
         self.status_label.setText("انجام شد")
         self.progress.setValue(100)
+        self.done_in_run += 1
+        if self.tray is not None and path is not None:
+            self.tray.finished(path.name, output.name)
 
     def _on_failed(self, message: str) -> None:
         path = self.running_path
         if path is not None:
             self._set_status(path, STATUS_FAILED)
         self.status_label.setText("خطا")
-        if message != "لغو شد":
-            QMessageBox.warning(self, "پردازش انجام نشد", message)
+        if self.tray is not None and path is not None:
+            self.tray.failed(path.name, message)
+        QMessageBox.warning(self, "پردازش انجام نشد", message)
+
+    def _on_cancelled(self) -> None:
+        path = self.running_path
+        if path is not None:
+            self._set_status(path, STATUS_CANCELLED)
+        self.progress.setValue(0)
+        self.status_label.setText("لغو شد")
+        if self.tray is not None and path is not None:
+            self.tray.cancelled(path.name)
 
     def _job_finished(self) -> None:
         # `finished` fires as the thread is winding down, not once it is gone.
@@ -734,18 +1009,25 @@ class MainWindow(QMainWindow):
         if job is not None:
             job.thread.wait(10_000)
         self._update_buttons()
-        self.start_queue()  # move on to the next file in the queue
+        self._continue_queue()
 
     def cancel(self) -> None:
         if self.job is not None:
+            self.stop_requested = True
             self.job.worker.cancel()
             self.status_label.setText("در حال لغو…")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         """Never let the window die while a worker thread is still alive."""
+        self.save_settings()
+        if self.tray is not None:
+            self.tray.hide()  # or Windows leaves a ghost icon by the clock
         if self.job is not None:
-            self.job.stop()
-            self.job = None
+            self.stop_requested = True
+            if self.job.stop():
+                self.job = None
+            # Otherwise the reference is kept: dropping a QThread that is
+            # still running takes the process down with it.
         super().closeEvent(event)
 
     def refresh_models(self) -> None:
@@ -798,7 +1080,8 @@ class MainWindow(QMainWindow):
         if saved.exists():
             try:
                 return Project.load(saved)
-            except Exception:
+            except Exception:  # noqa: BLE001 - reported to the user by the caller
+                log.exception("پروژه خوانده نشد: %s", saved)
                 return None
         return None
 
@@ -814,7 +1097,17 @@ class MainWindow(QMainWindow):
             row = min(rows) if rows else None
         if row is not None and row < len(self.queue):
             project = self._project_for(self.queue[row])
-        if project is None:
+            if project is None:
+                # Falling back to the last result here opened a different
+                # video's subtitle under this file's name.
+                QMessageBox.information(
+                    self,
+                    "ویرایش",
+                    f"برای «{self.queue[row].name}» هنوز زیرنویسی ساخته نشده "
+                    "(یا فایل پروژه‌اش خوانده نشد). اول همین فایل را پردازش کن.",
+                )
+                return
+        else:
             project = self.last_project
         if project is None:
             QMessageBox.information(
@@ -826,6 +1119,9 @@ class MainWindow(QMainWindow):
 
         dialog = EditorDialog(project, self.config, self)
         dialog.exec()
+        # A style picked inside the editor is the style from now on.
+        self._fill_profiles()
+        self.save_settings()
 
     def open_output_folder(self) -> None:
         if self.last_output is None:

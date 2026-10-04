@@ -21,8 +21,8 @@ from .engine.whispercpp import WhisperOptions, dtw_preset_for, run
 from .models import Project, Word
 from .render.keywords import mark_keywords
 from .render.merge import arbitrate_repeats, merge_streams
-from .render.segment import build_cues
-from .render.writers import write_subtitle
+from .render.segment import project_cues
+from .render.writers import DEFAULT_FRAME, write_subtitle
 from .text import corrections as corrections_module
 from .text.repetition import drop_repetitions
 from .text.normalize import normalize_word
@@ -30,6 +30,24 @@ from .text.normalize import normalize_word
 
 class PipelineError(RuntimeError):
     pass
+
+
+class Cancelled(BaseException):
+    """The user stopped the run. Not a failure, and never swallowed.
+
+    A BaseException on purpose, like KeyboardInterrupt: the second model and
+    the gap recovery deliberately catch every Exception so that a failed
+    extra pass cannot lose the first one, and a cancel caught there used to
+    be logged as "second model failed" while the run carried on to the end.
+    """
+
+
+Checkpoint = Callable[[], None]
+
+
+def _check(checkpoint: Checkpoint | None) -> None:
+    if checkpoint:
+        checkpoint()
 
 
 @dataclass
@@ -65,6 +83,7 @@ def _fill_with_second_model(
     *,
     on_log=None,
     on_progress=None,
+    checkpoint: Checkpoint | None = None,
 ) -> list[Word]:
     """Run the merge model and splice it into the holes of the first pass."""
     model = locate.model_path(config.merge_model or "")
@@ -89,6 +108,7 @@ def _fill_with_second_model(
             # Second half of the bar: without this the UI sits at 100% for a
             # minute and looks frozen.
             on_progress=(lambda pct: on_progress(50 + pct // 2)) if on_progress else None,
+            checkpoint=checkpoint,
         )
     except Exception as error:  # a failed second opinion must not lose the first
         if on_log:
@@ -128,6 +148,7 @@ def _recover_gaps(
     tmp: Path,
     *,
     on_log=None,
+    checkpoint: Checkpoint | None = None,
 ) -> list[Word]:
     """Transcribe again, but only where the audio has speech and the text does not.
 
@@ -155,7 +176,7 @@ def _recover_gaps(
             }
         )
         try:
-            found = run(attempt, wav, tmp / f"gap{index}", on_log=None)
+            found = run(attempt, wav, tmp / f"gap{index}", on_log=None, checkpoint=checkpoint)
         except Exception as error:  # a failed retry must not lose the transcript
             if on_log:
                 on_log(f"بازیابی بازه {start:.1f}s انجام نشد: {error}")
@@ -191,7 +212,13 @@ def transcribe(
     duration_ms: int | None = None,
     on_progress: Callable[[int], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    checkpoint: Checkpoint | None = None,
 ) -> Project:
+    """Video -> WordStream.
+
+    `checkpoint` is called between stages and for every line whisper-cli
+    prints; raising `Cancelled` from it stops the run cleanly.
+    """
     video_path = Path(video)
     if not video_path.exists():
         raise PipelineError(f"فایل پیدا نشد: {video_path}")
@@ -223,7 +250,18 @@ def transcribe(
 
     with tempfile.TemporaryDirectory(prefix="farsisub-") as tmp:
         # whisper-cli reads flac/mp3/ogg/wav only, never a video container.
-        wav = audio_module.extract_wav(video_path, Path(tmp) / "audio.wav")
+        try:
+            wav = audio_module.extract_wav(
+                video_path, Path(tmp) / "audio.wav", checkpoint=checkpoint
+            )
+        except audio_module.AudioError as error:
+            raise PipelineError(f"صدای «{video_path.name}» خوانده نشد: {error}") from error
+        except Exception as error:  # noqa: BLE001 - FFmpeg's own errors, in Persian
+            raise PipelineError(
+                f"صدای «{video_path.name}» خوانده نشد؛ فایل خراب است یا قالبش پشتیبانی نمی‌شود "
+                f"({error})"
+            ) from error
+        _check(checkpoint)
         out_prefix = Path(tmp) / video_path.stem
         two_passes = bool(config.merge_model and config.merge_model != config.model_name)
         first_progress = on_progress
@@ -236,6 +274,7 @@ def transcribe(
             out_prefix,
             on_progress=first_progress,
             on_log=on_log,
+            checkpoint=checkpoint,
         )
 
         # Whisper loops phrases when its decoder gets stuck; the repeat is not
@@ -245,7 +284,7 @@ def transcribe(
             on_log(f"{repeated} کلمه تکراری حذف شد")
 
         # A second model, used only where the first one stayed silent.
-        if config.merge_model and config.merge_model != config.model_name:
+        if two_passes:
             if on_progress:
                 on_progress(50)
             words = _fill_with_second_model(
@@ -256,8 +295,10 @@ def transcribe(
                 Path(tmp),
                 on_log=on_log,
                 on_progress=on_progress,
+                checkpoint=checkpoint,
             )
 
+        _check(checkpoint)
         try:
             envelope = audio_module.energy_envelope(wav)
         except Exception as error:  # audio is a bonus signal, never a blocker
@@ -268,7 +309,9 @@ def transcribe(
         # Whatever the cause -- a skipped window, a failed pass -- speech with
         # no words is a hole the user will see. Fill it here.
         if envelope is not None and words:
-            words = _recover_gaps(words, envelope, options, wav, Path(tmp), on_log=on_log)
+            words = _recover_gaps(
+                words, envelope, options, wav, Path(tmp), on_log=on_log, checkpoint=checkpoint
+            )
 
     table = corrections_module.build_table(config.text.auto_corrections)
     cleaned: list[Word] = []
@@ -316,10 +359,32 @@ def output_path(video: Path, config: AppConfig, suffix: str = ".srt") -> Path:
 
 
 def render(project: Project, config: AppConfig, *, suffix: str = ".srt") -> Path:
-    """Re-render subtitles from an existing WordStream. No model involved."""
-    cues = build_cues(project.words, config.profile, config.text)
+    """Re-render subtitles from an existing WordStream. No model involved.
+
+    Lines shaped by hand in the editor win over the style, exactly as the
+    editor itself shows them: rendering from the words alone threw that work
+    away.
+    """
+    cues = project_cues(project, config.profile, config.text)
     target = output_path(Path(project.video_path), config, suffix)
-    return write_subtitle(cues, target, bom=config.text.bom)
+    return write_subtitle(
+        cues,
+        target,
+        bom=config.text.bom,
+        style=config.ass_style,
+        frame=video_frame(project.video_path) if suffix == ".ass" else DEFAULT_FRAME,
+    )
+
+
+def video_frame(video: str | Path) -> tuple[int, int]:
+    """The picture size, for styled output; a sensible default when unknown."""
+    try:
+        info = audio_module.probe(video)
+    except audio_module.AudioError:
+        return DEFAULT_FRAME
+    if info.width > 0 and info.height > 0:
+        return info.width, info.height
+    return DEFAULT_FRAME
 
 
 def process(
@@ -332,6 +397,7 @@ def process(
     suffix: str = ".srt",
     on_progress: Callable[[int], None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    checkpoint: Checkpoint | None = None,
 ) -> tuple[Project, Path]:
     project = transcribe(
         video,
@@ -340,8 +406,12 @@ def process(
         glossary=glossary,
         on_progress=on_progress,
         on_log=on_log,
+        checkpoint=checkpoint,
     )
-    subtitle = render(project, config, suffix=suffix)
+    # The transcript is the expensive part: keep it before anything else can
+    # fail. A subtitle that cannot be written (a read-only folder, the file
+    # open in a player) used to take twenty minutes of transcription with it.
     if save_project:
         project.save(locate.project_path(project.video_path))
+    subtitle = render(project, config, suffix=suffix)
     return project, subtitle

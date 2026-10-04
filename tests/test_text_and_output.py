@@ -20,6 +20,7 @@ from farsisub.render.writers import format_timestamp, to_srt, write_subtitle  # 
 from farsisub.text.normalize import (  # noqa: E402
     apply_punctuation_rules,
     normalize_text,
+    normalize_word,
     to_persian_digits,
 )
 
@@ -43,6 +44,15 @@ def test_digits_follow_the_switch():
     assert to_persian_digits("2026") == "۲۰۲۶"
     assert normalize_text("سال 1404", RULES) == "سال ۱۴۰۴"
     assert normalize_text("سال ۱۴۰۴", TextRules(persian_digits=False)) == "سال 1404"
+
+
+def test_repeated_digits_are_a_number_not_a_stretched_word():
+    # "۵۰۰۰ تومان" came out as "۵۰ تومان": the stretch rule ate the zeros.
+    assert normalize_word("1000", RULES) == "1000"
+    assert normalize_word("۵۰۰۰", RULES) == "۵۰۰۰"
+    assert normalize_word("۱۱۱.", RULES) == "۱۱۱."
+    # A stretched Persian word still collapses.
+    assert normalize_word("سلاممم", RULES) == "سلام"
 
 
 def test_space_before_punctuation_is_removed():
@@ -303,6 +313,43 @@ def test_multi_word_corrections_are_applied_to_a_line():
     assert correct_text("زن خونه دار با بوهران", table) == "زن خونه‌دار با بحران"
 
 
+def test_multi_word_corrections_only_match_whole_words():
+    from farsisub.text.corrections import correct_text
+
+    table = {"خونه دار": "خونه‌دار"}
+    # "خونه دار" sits inside "کتابخونه داره" only as letters, not as words.
+    assert correct_text("کتابخونه داره میاد", table) == "کتابخونه داره میاد"
+    assert correct_text("خونه دار، خسته", table) == "خونه‌دار، خسته"
+
+
+def test_a_broken_glossary_is_kept_not_overwritten():
+    # A half-written glossary used to read as empty, and the next correction
+    # saved over it: every word the user had taught was gone.
+    import os
+    import tempfile
+
+    from farsisub.text import corrections
+
+    with tempfile.TemporaryDirectory() as home:
+        previous = os.environ.get("FARSISUB_DATA")
+        os.environ["FARSISUB_DATA"] = home
+        try:
+            broken = '{"corrections": {"بوهران": "بحران", '
+            corrections.glossary_path().write_text(broken, encoding="utf-8")
+            assert corrections.load_glossary() == {}
+
+            corrections.add_correction("تعیید", "تأیید")
+            assert corrections.load_glossary() == {"تعیید": "تأیید"}
+            kept = list(Path(home).glob("glossary.broken-*.json"))
+            assert len(kept) == 1
+            assert kept[0].read_text(encoding="utf-8") == broken
+        finally:
+            if previous is None:
+                os.environ.pop("FARSISUB_DATA", None)
+            else:
+                os.environ["FARSISUB_DATA"] = previous
+
+
 def test_models_are_found_in_extra_folders(tmp_path=None):
     # An installed copy should reuse a model set already on the disk instead of
     # downloading gigabytes again.
@@ -323,9 +370,25 @@ def test_models_are_found_in_extra_folders(tmp_path=None):
             found = locate.installed_models()
             assert "large-v3" in found
             assert "my-tune" in found
-            assert locate.model_path("my-tune") == Path(shared) / "ggml-my-tune.bin"
+            # Resolved on both sides: a Windows temp folder can come as an 8.3
+            # short name ("RUNNER~1") that the registered folder spells out.
+            found_path = locate.model_path("my-tune")
+            assert found_path.resolve() == (Path(shared) / "ggml-my-tune.bin").resolve()
         finally:
             if previous is None:
                 os.environ.pop("FARSISUB_DATA", None)
             else:
                 os.environ["FARSISUB_DATA"] = previous
+
+
+def test_a_finished_but_unrenamed_download_is_installed_without_the_network():
+    # The .part had every byte; asking the server for more got a 416 from
+    # every mirror and the model could never be installed.
+    from farsisub.engine import modelstore
+
+    with tempfile.TemporaryDirectory() as folder:
+        target = Path(folder) / "ggml-test.bin"
+        target.with_suffix(".bin.part").write_bytes(b"x" * 10)
+        result = modelstore.download(["http://127.0.0.1:9/unreachable"], target, 10)
+        assert result == target
+        assert target.read_bytes() == b"x" * 10

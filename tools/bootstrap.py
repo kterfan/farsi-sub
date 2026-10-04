@@ -22,6 +22,12 @@ sys.path.insert(0, str(ROOT / "src"))
 from farsisub.engine import locate, modelstore  # noqa: E402
 
 RELEASES_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest"
+RELEASE_DOWNLOAD = "https://github.com/ggml-org/whisper.cpp/releases/download/{version}/{name}"
+
+# The engine the app is built and measured against. "Latest" is not safe:
+# v1.9.4 shipped without the Windows CUDA archive, and flags such as -dtw and
+# -nfa behave differently between versions (see HANDOFF.md).
+DEFAULT_ENGINE_VERSION = "v1.8.2"
 
 # Preference order for the Windows build. Vulkan has no official binary yet, so
 # CUDA covers NVIDIA and the plain CPU build covers everything else.
@@ -70,19 +76,39 @@ def release_assets() -> dict[str, dict]:
     return {asset["name"]: asset for asset in data.get("assets", [])}
 
 
-def fetch_engine(flavour: str) -> Path:
-    assets = release_assets()
-    chosen = next((assets[n] for n in ASSET_PREFERENCE[flavour] if n in assets), None)
-    if chosen is None:
-        raise SystemExit(f"هیچ فایل مناسبی برای {flavour} در انتشار پیدا نشد")
+def fetch_engine(flavour: str, version: str | None = DEFAULT_ENGINE_VERSION) -> Path:
+    """Download and unpack whisper.cpp into bin/.
 
+    With a version the archive is fetched straight from that release, no API
+    call; `None` asks the API for the latest release instead.
+    """
     bin_dir = locate.bin_dir()
     bin_dir.mkdir(parents=True, exist_ok=True)
-    archive = bin_dir / chosen["name"]
-    reporter = Reporter(f"موتور ({flavour})")
-    modelstore.download(
-        [chosen["browser_download_url"]], archive, chosen["size"], on_progress=reporter
-    )
+    reporter = Reporter(f"موتور ({flavour} {version or 'latest'})")
+    archive: Path | None = None
+    if version:
+        for name in ASSET_PREFERENCE[flavour]:
+            try:
+                archive = modelstore.download(
+                    [RELEASE_DOWNLOAD.format(version=version, name=name)],
+                    bin_dir / name,
+                    on_progress=reporter,
+                )
+                break
+            except modelstore.DownloadError as error:
+                print(f"\n{name}: {error}")
+    else:
+        assets = release_assets()
+        chosen = next((assets[n] for n in ASSET_PREFERENCE[flavour] if n in assets), None)
+        if chosen is not None:
+            archive = modelstore.download(
+                [chosen["browser_download_url"]],
+                bin_dir / chosen["name"],
+                chosen["size"],
+                on_progress=reporter,
+            )
+    if archive is None:
+        raise SystemExit(f"هیچ فایل مناسبی برای {flavour} در انتشار {version or 'latest'} پیدا نشد")
     reporter.done()
 
     with zipfile.ZipFile(archive) as zf:
@@ -103,10 +129,15 @@ def main() -> int:
     parser.add_argument("--flavour", default="cuda", choices=sorted(ASSET_PREFERENCE))
     parser.add_argument("--skip-engine", action="store_true")
     parser.add_argument("--skip-model", action="store_true")
+    parser.add_argument(
+        "--version",
+        default=DEFAULT_ENGINE_VERSION,
+        help="نسخه whisper.cpp، مثل v1.8.2؛ latest برای آخرین انتشار",
+    )
     args = parser.parse_args()
 
     if not args.skip_engine:
-        fetch_engine(args.flavour)
+        fetch_engine(args.flavour, None if args.version == "latest" else args.version)
         reporter = Reporter("مدل VAD")
         modelstore.download_vad(on_progress=reporter)
         reporter.done()

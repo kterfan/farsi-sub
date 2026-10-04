@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import re
+import time
 from pathlib import Path
+from typing import Any
 
 from ..engine import locate
+from ..fileio import atomic_write_text
+
+log = logging.getLogger(__name__)
 
 # Forms Whisper produces that are not words in Persian. Safe to replace.
 BUILTIN_CORRECTIONS: dict[str, str] = {
@@ -62,42 +68,84 @@ def glossary_path() -> Path:
     return locate.data_dir() / GLOSSARY_FILE
 
 
-def load_glossary() -> dict[str, str]:
-    """User corrections: {heard -> correct}."""
+def _set_aside(path: Path, reason: Exception) -> None:
+    """Move a broken glossary out of the way instead of writing over it.
+
+    Treating it as empty and saving the next correction on top used to wipe
+    every correction the user had ever taught. Kept beside the original, the
+    file can still be repaired by hand.
+    """
+    backup = path.with_name(f"{path.stem}.broken-{time.strftime('%Y%m%d-%H%M%S')}{path.suffix}")
+    try:
+        path.replace(backup)
+        log.warning("دیکشنری خراب بود (%s)؛ نسخه‌اش نگه داشته شد: %s", reason, backup)
+    except OSError as error:
+        log.warning("دیکشنری خراب است (%s) و کنار گذاشتنش ممکن نشد: %s", reason, error)
+
+
+def _read_glossary_file(*, strict: bool = False) -> dict[str, Any]:
+    """The raw glossary JSON, or {} when there is none.
+
+    `strict` is for callers about to write: a file that exists but cannot be
+    read right now (locked by another program) must stop the write rather
+    than be replaced with a shorter version.
+    """
     path = glossary_path()
-    if not path.exists():
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        if strict:
+            raise
+        log.warning("دیکشنری خوانده نشد: %s", path, exc_info=True)
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("glossary is not a JSON object")
+    except ValueError as error:  # JSONDecodeError is a ValueError
+        _set_aside(path, error)
         return {}
-    return {str(k): str(v) for k, v in data.get("corrections", {}).items()}
+    return data
+
+
+def _corrections_of(data: dict[str, Any]) -> dict[str, str]:
+    corrections = data.get("corrections")
+    if not isinstance(corrections, dict):
+        return {}
+    return {str(k): str(v) for k, v in corrections.items()}
+
+
+def _keywords_of(data: dict[str, Any]) -> set[str]:
+    keywords = data.get("keywords")
+    if not isinstance(keywords, list):
+        return set()
+    return {str(w) for w in keywords}
+
+
+def load_glossary() -> dict[str, str]:
+    """User corrections: {heard -> correct}."""
+    return _corrections_of(_read_glossary_file())
 
 
 def load_keywords() -> set[str]:
     """Terms the user marked as keywords for the reels profile."""
-    path = glossary_path()
-    if not path.exists():
-        return set()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return set()
-    return {str(w) for w in data.get("keywords", [])}
+    return _keywords_of(_read_glossary_file())
 
 
 def save_glossary(corrections: dict[str, str], keywords: set[str] | None = None) -> Path:
-    path = glossary_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"corrections": corrections, "keywords": sorted(keywords or set())}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return atomic_write_text(
+        glossary_path(), json.dumps(payload, ensure_ascii=False, indent=2)
+    )
 
 
 def add_correction(heard: str, correct: str) -> Path:
-    corrections = load_glossary()
+    data = _read_glossary_file(strict=True)
+    corrections = _corrections_of(data)
     corrections[heard.strip()] = correct.strip()
-    return save_glossary(corrections, load_keywords())
+    return save_glossary(corrections, _keywords_of(data))
 
 
 def build_table(use_builtin: bool = True) -> dict[str, str]:
@@ -127,7 +175,10 @@ def correct_text(text: str, table: dict[str, str]) -> str:
     out = text
     for heard, correct in table.items():
         if " " in heard and heard in out:
-            out = out.replace(heard, correct)
+            # Whole words only: a bare substring replace turned "کتابخونه
+            # داره" into "کتابخونه‌داره" through the entry "خونه دار".
+            pattern = rf"(?<![\w‌]){re.escape(heard)}(?![\w‌])"
+            out = re.sub(pattern, lambda _m, fix=correct: fix, out)
     return re.sub(r"\S+", lambda m: correct_word(m.group(0), table), out)
 
 

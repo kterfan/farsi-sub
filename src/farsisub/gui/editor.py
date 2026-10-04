@@ -15,12 +15,15 @@ from dataclasses import dataclass, replace
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QSizeF, Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, QSizeF, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
+    QComboBox,
     QDialog,
+    QFrame,
+    QMenu,
+    QProgressDialog,
     QGraphicsScene,
     QGraphicsTextItem,
     QGraphicsView,
@@ -28,12 +31,10 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QStyledItemDelegate,
-    QToolBar,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -44,12 +45,24 @@ import json
 import logging
 import os
 
-from ..config import AppConfig
+from ..config import BUILTIN_PROFILES, AppConfig
+from ..fileio import atomic_write_text
 from ..models import Cue, EditedLine, Project, Word
-from ..render.segment import build_cues, wrap_lines
+from ..render.segment import build_cues, cues_from_lines
 from ..render.writers import write_subtitle
 from ..text.corrections import add_correction, correct_text, diff_pairs
+from ..text.normalize import to_persian_digits
 from . import theme
+from .widgets import ActionButton, ResponsiveRow, Segment, ToggleSwitch
+from .editor_tools import (
+    BurnWorker,
+    EnvelopeWorker,
+    FindReplaceDialog,
+    WaveformStrip,
+    move_edge,
+    replace_in_cues,
+    replace_in_text,
+)
 
 COL_START, COL_END, COL_DURATION, COL_CPS, COL_TEXT = range(5)
 
@@ -59,10 +72,8 @@ COL_START, COL_END, COL_DURATION, COL_CPS, COL_TEXT = range(5)
 # picture stayed black on the line the user had just picked.
 NUDGE_TIMEOUT_MS = 600
 
-# The doubt colours are darkened against the light table but have to lighten
-# up on the selection band, or they vanish into it.
-SELECTED_WARN = "#ffd479"
-SELECTED_DANGER = "#ffb3a7"
+# Taller than the queue's rows: these are read, retyped and read again.
+EDITOR_ROW = 44
 
 PLAY_LABEL = "پخش خط"
 PAUSE_LABEL = "توقف"
@@ -161,6 +172,35 @@ def saved_to_editable(project: Project) -> list[EditableCue]:
 def bare_word(text: str) -> str:
     """A token stripped of what the eye ignores when comparing two lines."""
     return text.strip("،؛:.!؟…‌").replace("‌", "")
+
+
+def _move_token(source: str, target: str, down: bool) -> tuple[str, str] | None:
+    """Move the last (down) or first (up) token of one line onto the other.
+
+    None when the source would be left with no text at all.
+    """
+    tokens = source.split()
+    if len(tokens) < 2:
+        return None
+    if down:
+        return " ".join(tokens[:-1]), f"{tokens[-1]} {target}".strip()
+    return " ".join(tokens[1:]), f"{target} {tokens[0]}".strip()
+
+
+def split_text(text: str, cut: int, of: int) -> tuple[str, str]:
+    """Split a line's text where its words are split: `cut` words out of `of`.
+
+    The text shown is what gets split, never the raw model words: rebuilding
+    from those threw away the user's corrections and the writing rules
+    (Persian digits, dropped commas, ZWNJ). When the text no longer lines up
+    with the words one for one, it is cut at the same share of the line.
+    """
+    tokens = text.split()
+    if len(tokens) < 2:
+        return text.strip(), ""
+    at = cut if len(tokens) == of else round(cut / max(of, 1) * len(tokens))
+    at = max(1, min(at, len(tokens) - 1))
+    return " ".join(tokens[:at]), " ".join(tokens[at:])
 
 
 def cue_index_at(cues: list[EditableCue], starts: list[float], seconds: float) -> int:
@@ -316,6 +356,31 @@ class SeekSlider(QSlider):
         super().mousePressEvent(event)
 
 
+class RowMarkDelegate(QStyledItemDelegate):
+    """A bar at the start of the row the user is on.
+
+    The selected row is only a light tint, which is easy to lose in a long
+    list while the video moves it; the bar gives the eye a fixed mark.
+    """
+
+    def paint(self, painter, option, index):  # noqa: N802 - Qt naming
+        from PySide6.QtWidgets import QStyle
+
+        super().paint(painter, option, index)
+        if not option.state & QStyle.State_Selected:
+            return
+        tokens = theme.tokens_for(option.widget)
+        rect = option.rect
+        rtl = option.direction == Qt.RightToLeft
+        x = rect.right() - 3 if rtl else rect.left()
+        painter.save()
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(tokens.accent))
+        painter.drawRoundedRect(x, rect.top() + 6, 4, rect.height() - 12, 2, 2)
+        painter.restore()
+
+
 class MarkingDelegate(QStyledItemDelegate):
     """Keeps track of the word the user highlighted while editing a line.
 
@@ -329,9 +394,10 @@ class MarkingDelegate(QStyledItemDelegate):
         super().__init__(owner)
         self.owner = owner
 
-    PAD = 4
+    PAD = 8
+    PAD_X = 12
 
-    def _document(self, option, index, selected: bool = False):
+    def _document(self, option, index):
         """The line as it is drawn: wrapped, right to left, doubts coloured.
 
         Every line goes through this, not just the doubtful ones. The default
@@ -347,21 +413,27 @@ class MarkingDelegate(QStyledItemDelegate):
         palette = self.owner.palette_tokens
         very_low = self.owner.config.very_low_confidence
 
-        # On the blue selection band the normal ink is nearly unreadable, so
-        # the row being worked on switches to the highlight's own text colour.
-        base = option.palette.highlightedText().color().name() if selected else palette.text
+        # The selected row is only a tint now, so every colour stays the one
+        # it has everywhere else: no second set of "on blue" shades to keep.
+        base = palette.text
+        keywords = self.owner.keyword_texts(cue) if cue else set()
         parts = []
         for token in (index.data() or "").split():
             bare = token.strip("،؛:.!؟…")
             probability = shaky.get(bare)
             if probability is None:
-                parts.append(escape(token))
+                if bare in keywords:
+                    # Underlined as well: colour is never the only signal.
+                    parts.append(
+                        f'<span style="color:{palette.keyword};font-weight:700;text-decoration:underline">'
+                        f"{escape(token)}</span>"
+                    )
+                else:
+                    parts.append(escape(token))
                 continue
             colour = palette.danger if probability < very_low else palette.warn
-            if selected:
-                colour = SELECTED_DANGER if probability < very_low else SELECTED_WARN
             parts.append(
-                f'<span style="color:{colour};font-weight:600">{escape(token)}</span>'
+                f'<span style="color:{colour};font-weight:700">{escape(token)}</span>'
             )
 
         document = QTextDocument()
@@ -370,7 +442,7 @@ class MarkingDelegate(QStyledItemDelegate):
         document.setHtml(
             '<div style="color:%s" dir="rtl">%s</div>' % (base, " ".join(parts))
         )
-        document.setTextWidth(max(option.rect.width() - 2 * self.PAD, 40))
+        document.setTextWidth(max(option.rect.width() - 2 * self.PAD_X, 40))
         return document
 
     def sizeHint(self, option, index):  # noqa: N802 - Qt naming
@@ -378,19 +450,26 @@ class MarkingDelegate(QStyledItemDelegate):
         document = self._document(option, index)
         height = int(document.size().height()) + 2 * self.PAD
         base = super().sizeHint(option, index)
-        return QSize(base.width(), max(height, theme.ROW_HEIGHT))
+        return QSize(base.width(), max(height, EDITOR_ROW))
 
     def paint(self, painter, option, index):  # noqa: N802 - Qt naming
         """Draw the line with only its doubtful words coloured."""
-        from PySide6.QtWidgets import QStyle
+        from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionViewItem
 
-        selected = bool(option.state & QStyle.State_Selected)
-        document = self._document(option, index, selected=selected)
+        document = self._document(option, index)
+
+        # The row's own background -- hover, selection, the hairline under
+        # it -- comes from the style sheet, exactly as in the other columns.
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.text = ""
+        widget = option.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawPrimitive(QStyle.PE_PanelItemViewItem, background, painter, widget)
 
         painter.save()
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-        painter.translate(option.rect.left() + self.PAD, option.rect.top() + self.PAD)
+        top = option.rect.top() + max(self.PAD, (option.rect.height() - document.size().height()) / 2)
+        painter.translate(option.rect.left() + self.PAD_X, top)
         document.drawContents(painter)
         painter.restore()
 
@@ -448,6 +527,8 @@ class EditorDialog(QDialog):
         # short of closing the dialog without saving.
         self.history: list[list[EditableCue]] = []
         self.redo_stack: list[list[EditableCue]] = []
+        self._times_history: list[list] = []
+        self._times_redo: list[list] = []
 
         # Checking a line used to mean opening the video in another player.
         self.player = None
@@ -460,6 +541,16 @@ class EditorDialog(QDialog):
         self.video_side_chosen = False
         self._saved_state: dict = {}
         self._finished = False
+        # Whether the lines are the user's own. Until then the style stays in
+        # charge: saving the auto-built lines on every close froze the layout,
+        # and switching to another style later changed nothing in here.
+        self.shaped = bool(project.lines)
+        # A keyword or a word's time changed by hand: the project has to be
+        # written even if the lines themselves were left to the style.
+        self.words_touched = False
+        self.wave = None
+        self.wave_thread: QThread | None = None
+        self.burn_thread: QThread | None = None
         self.stop_at = 0.0
         # A seek before the media is loaded is silently dropped, so it is kept
         # here and replayed the moment the player reports LoadedMedia.
@@ -484,6 +575,7 @@ class EditorDialog(QDialog):
             self.cues = cues_to_editable(project, cues)
         self._build()
         self._restore_ui_state()
+        self._start_waveform(Path(project.video_path))
         self._reload()
         if self.cues:
             self.table.setCurrentCell(0, COL_TEXT)
@@ -547,12 +639,13 @@ class EditorDialog(QDialog):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3, theme.SPACE * 3)
-        layout.setSpacing(theme.SPACE * 2)
+        layout.setContentsMargins(theme.SPACE * 4, theme.SPACE * 4, theme.SPACE * 4, theme.SPACE * 4)
+        layout.setSpacing(theme.SPACE * 3)
 
-        self.summary = QLabel()
-        self.summary.setObjectName("Muted")
-        layout.addWidget(self.summary)
+        self._build_table()
+        self._build_actions()
+        layout.addWidget(self._header())
+        layout.addWidget(self._command_bar())
 
         # The picture and the table share the window, and the user decides how.
         self.splitter = QSplitter(Qt.Vertical)
@@ -561,121 +654,14 @@ class EditorDialog(QDialog):
         if self.video is not None:
             self.video_pane = self._video_pane()
             self.splitter.addWidget(self.video_pane)
-
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["شروع", "پایان", "مدت", "CPS", "متن"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(theme.ROW_HEIGHT)
-        # A wrapped two-line cue needs the room; Qt asks the delegate per row.
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.table.setWordWrap(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        header = self.table.horizontalHeader()
-        for column in (COL_START, COL_END, COL_DURATION, COL_CPS):
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(COL_TEXT, QHeaderView.Stretch)
-        delegate = MarkingDelegate(self)
-        delegate.closeEditor.connect(self.editor_closed)
-        self.table.setItemDelegateForColumn(COL_TEXT, delegate)
-        self.table.itemChanged.connect(self._text_edited)
-        self.table.currentCellChanged.connect(self._row_selected)
-        self.splitter.addWidget(self.table)
-        self.splitter.setStretchFactor(self.splitter.indexOf(self.table), 1)
-
-        # Short labels, shortcuts in the tooltip: with the full text on every
-        # button, three of them fell into the overflow menu at the default
-        # window width.
-        self.split_button = QPushButton("تقسیم")
-        self.split_button.setToolTip(
-            "این خط را دو تکه کن — Ctrl+Enter\n"
-            "نشانگر را داخل متن هر جا بگذاری، از همان‌جا تقسیم می‌شود"
-        )
-        self.split_button.clicked.connect(self.split_selected)
-        self.merge_button = QPushButton("ادغام")
-        self.merge_button.setToolTip("با خط بعدی یکی کن — Ctrl+M")
-        self.merge_button.clicked.connect(self.merge_selected)
-        self.delete_button = QPushButton("حذف")
-        self.delete_button.setToolTip("این خط را بردار")
-        self.delete_button.clicked.connect(self.delete_selected)
-        self.continuous_box = QCheckBox("پخش پیوسته")
-        self.continuous_box.setToolTip(
-            "به‌جای ایستادن سر همان خط، ویدیو ادامه می‌دهد و تو همراهش می‌خوانی"
-        )
-
-        self.play_button = QPushButton(PLAY_LABEL)
-        self.play_button.setToolTip("همین خط را از ویدیو پخش می‌کند — Space")
-        self.play_button.clicked.connect(self.play_selected)
-
-        self.side_button = QPushButton("تصویر کنار")
-        self.side_button.setToolTip(
-            "تصویر را کنار جدول می‌برد یا برمی‌گرداند بالا.\n"
-            "ویدیوی عمودی کنار جدول بزرگ‌تر دیده می‌شود."
-        )
-        self.side_button.setEnabled(self.video is not None)
-        self.side_button.clicked.connect(self.toggle_video_side)
-
-        self.undo_button = QPushButton("واگرد")
-        self.undo_button.setToolTip("آخرین تغییر را برگردان — Ctrl+Z")
-        self.undo_button.setEnabled(False)
-        self.undo_button.clicked.connect(self.undo)
-        self.redo_button = QPushButton("از نو")
-        self.redo_button.setToolTip("همان تغییر را دوباره بگذار — Ctrl+Y")
-        self.redo_button.setEnabled(False)
-        self.redo_button.clicked.connect(self.redo)
-
-        self.word_down_button = QPushButton("کلمه ↓")
-        self.word_down_button.setToolTip(
-            "آخرین کلمه این خط را با زمانش می‌برد اول خط بعدی — Alt+Down"
-        )
-        self.word_down_button.clicked.connect(self.move_word_down)
-        self.word_up_button = QPushButton("کلمه ↑")
-        self.word_up_button.setToolTip(
-            "اولین کلمه این خط را با زمانش می‌برد آخر خط قبلی — Alt+Up"
-        )
-        self.word_up_button.clicked.connect(self.move_word_up)
-
-        self.zwnj_button = QPushButton("نیم‌فاصله")
-        self.zwnj_button.setToolTip(
-            "نیم‌فاصله را داخل کلمه می‌گذارد: می‌رود، خونه‌دار.\n"
-            "میان‌بر: Ctrl+Space یا Shift+Space"
-        )
-        self.zwnj_button.clicked.connect(self.insert_zwnj)
-
-        self.glossary_button = QPushButton("دیکشنری")
-        self.glossary_button.setToolTip(
-            "کلمه‌ای که اصلاح کردی برای همه ویدیوهای بعدی هم اعمال می‌شود"
-        )
-        self.glossary_button.clicked.connect(self.teach_correction)
-
-        self.export_button = QPushButton("ذخیره SRT")
-        self.export_button.setObjectName("Primary")
-        self.export_button.clicked.connect(self.export)
-
-        # Nine buttons in one row ran off the edge of a narrow window. A
-        # toolbar puts whatever does not fit behind its own overflow button.
-        bar = QToolBar()
-        bar.setMovable(False)
-        bar.setFloatable(False)
-        for group in (
-            (self.play_button, self.continuous_box, self.side_button),
-            (self.undo_button, self.redo_button),
-            (self.split_button, self.merge_button, self.delete_button),
-            (self.word_up_button, self.word_down_button),
-            (self.zwnj_button, self.glossary_button),
-        ):
-            for widget in group:
-                bar.addWidget(widget)
-            bar.addSeparator()
-
-        # Saving stays outside the toolbar: the overflow menu is no place for
-        # the one button the whole dialog exists for.
-        bottom = QHBoxLayout()
-        bottom.setSpacing(theme.SPACE * 2)
-        bottom.addWidget(bar, stretch=1)
-        bottom.addWidget(self.export_button)
-        layout.addLayout(bottom)
+        else:
+            # No picture: the transport controls have nowhere to live, and
+            # without a player they would do nothing anyway.
+            for widget in (self.play_button, self.continuous_box, self.side_button):
+                widget.setParent(self)
+                widget.hide()
+        self.splitter.addWidget(self.table_pane)
+        self.splitter.setStretchFactor(self.splitter.indexOf(self.table_pane), 1)
 
         # Space, Ctrl+Z and Ctrl+Y are swallowed before the key ever reaches a
         # cell editor, so typing a space used to start playback and Ctrl+Z used
@@ -692,6 +678,7 @@ class EditorDialog(QDialog):
             ("Ctrl+Y", self.redo),
             ("Alt+Down", self.move_word_down),
             ("Alt+Up", self.move_word_up),
+            ("Ctrl+H", self.find_replace),
         ):
             action = QAction(self)
             action.setShortcut(QKeySequence(shortcut))
@@ -700,25 +687,253 @@ class EditorDialog(QDialog):
             if shortcut in ("Space", "Ctrl+Z", "Ctrl+Y"):
                 self.editing_shortcuts.append(action)
 
-    def _video_pane(self) -> QWidget:
-        """The picture with its own scrub bar underneath."""
-        pane = QWidget()
-        column = QVBoxLayout(pane)
+    def _build_table(self) -> None:
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["شروع", "پایان", "مدت", "CPS", "متن"])
+        self.table.horizontalHeaderItem(COL_TEXT).setToolTip(
+            "دابل‌کلیک کن و بنویس. ویرایش متن زمان‌ها را تغییر نمی‌دهد."
+        )
+        self.table.horizontalHeaderItem(COL_CPS).setToolTip("حرف در ثانیه: هرچه بیشتر، سخت‌تر خوانده می‌شود")
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(EDITOR_ROW)
+        # A wrapped two-line cue needs the room; Qt asks the delegate per row.
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.setWordWrap(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # Hairlines between rows instead of stripes: the coloured words and
+        # the selected row both read better on one plain background.
+        self.table.setAlternatingRowColors(False)
+        self.table.setShowGrid(False)
+        self.table.setFrameShape(QFrame.NoFrame)
+        header = self.table.horizontalHeader()
+        header.setHighlightSections(False)
+        for column in (COL_START, COL_END, COL_DURATION, COL_CPS):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(COL_TEXT, QHeaderView.Stretch)
+        delegate = MarkingDelegate(self)
+        delegate.closeEditor.connect(self.editor_closed)
+        self.table.setItemDelegateForColumn(COL_TEXT, delegate)
+        self.table.setItemDelegateForColumn(COL_START, RowMarkDelegate(self))
+        self.table.itemChanged.connect(self._text_edited)
+        self.table.currentCellChanged.connect(self._row_selected)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+
+        # The waveform sits on the table, so moving an edge and reading the
+        # line it belongs to happen in one place.
+        self.table_pane = QWidget()
+        self.table_pane.setObjectName("Bare")
+        pane = QVBoxLayout(self.table_pane)
+        pane.setContentsMargins(0, 0, 0, 0)
+        pane.setSpacing(theme.SPACE * 2)
+        if Path(self.project.video_path).exists():
+            self.wave = WaveformStrip()
+            self.wave.setToolTip(
+                "موج صدای اطراف خط انتخاب‌شده. لبه آبی را بکش تا شروع یا پایان خط جابه‌جا شود؛\n"
+                "جای دیگر کلیک کنی ویدیو به همان لحظه می‌رود."
+            )
+            self.wave.edge_moved.connect(self._edge_moved)
+            self.wave.seek.connect(self._wave_seek)
+            pane.addWidget(self.wave)
+        card = QFrame()
+        card.setObjectName("Card")
+        inside = QVBoxLayout(card)
+        inside.setContentsMargins(theme.SPACE, theme.SPACE, theme.SPACE, theme.SPACE)
+        inside.addWidget(self.table)
+        pane.addWidget(card, stretch=1)
+
+    def _build_actions(self) -> None:
+        """Every command, built once; where each one sits is decided later."""
+        self.split_button = ActionButton("تقسیم", "split", priority=3)
+        self.split_button.setToolTip(
+            "این خط را دو تکه کن — Ctrl+Enter\n"
+            "نشانگر را داخل متن هر جا بگذاری، از همان‌جا تقسیم می‌شود"
+        )
+        self.split_button.clicked.connect(self.split_selected)
+        self.merge_button = ActionButton("ادغام", "merge", priority=3)
+        self.merge_button.setToolTip("با خط بعدی یکی کن — Ctrl+M")
+        self.merge_button.clicked.connect(self.merge_selected)
+        self.delete_button = ActionButton("حذف", "trash", priority=3)
+        self.delete_button.setToolTip("این خط را بردار")
+        self.delete_button.clicked.connect(self.delete_selected)
+
+        # Style switch with an instant preview: rendering costs nothing.
+        self.style_box = QComboBox()
+        for name, profile in BUILTIN_PROFILES.items():
+            self.style_box.addItem(profile.label, name)
+        if self.config.custom_profile is not None:
+            self.style_box.addItem(self.config.custom_profile.label, self.config.custom_profile.name)
+        self.style_box.setCurrentIndex(max(0, self.style_box.findData(self.config.profile.name)))
+        self.style_box.setToolTip("سبک زیرنویس؛ همین‌جا عوضش کن و روی ویدیو ببین")
+        self.style_box.currentIndexChanged.connect(self._style_changed)
+
+        self.find_button = ActionButton("جایگزینی", "search", priority=2)
+        self.find_button.setToolTip("یک کلمه را در همه خط‌ها عوض کن — Ctrl+H")
+        self.find_button.clicked.connect(self.find_replace)
+
+        self.burn_button = ActionButton("ویدیو با زیرنویس", "film", priority=1)
+        self.burn_button.setToolTip(
+            "زیرنویس را روی خود تصویر می‌نشاند و یک MP4 تازه می‌سازد؛\n"
+            "برای اینستاگرام و جاهایی که فایل زیرنویس جدا نمی‌گیرند"
+        )
+        self.burn_button.setEnabled(Path(self.project.video_path).exists())
+        self.burn_button.clicked.connect(self.burn_video)
+
+        self.continuous_box = ToggleSwitch("پخش پیوسته")
+        self.continuous_box.setToolTip(
+            "به‌جای ایستادن سر همان خط، ویدیو ادامه می‌دهد و تو همراهش می‌خوانی"
+        )
+
+        self.play_button = ActionButton(PLAY_LABEL, "play", name="Round", icon_only=True)
+        self.play_button.setIconSize(QSize(20, 20))
+        self.play_button.setToolTip("همین خط را از ویدیو پخش می‌کند — Space")
+        self.play_button.clicked.connect(self.play_selected)
+
+        self.side_button = ActionButton("تصویر کنار", "columns", name="Quiet", icon_only=True)
+        self.side_button.setToolTip(
+            "تصویر را کنار جدول می‌برد یا برمی‌گرداند بالا.\n"
+            "ویدیوی عمودی کنار جدول بزرگ‌تر دیده می‌شود."
+        )
+        self.side_button.setEnabled(self.video is not None)
+        self.side_button.clicked.connect(self.toggle_video_side)
+
+        self.undo_button = ActionButton("واگرد", "undo", icon_only=True)
+        self.undo_button.setToolTip("آخرین تغییر را برگردان — Ctrl+Z")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.undo)
+        self.redo_button = ActionButton("از نو", "redo", icon_only=True)
+        self.redo_button.setToolTip("همان تغییر را دوباره بگذار — Ctrl+Y")
+        self.redo_button.setEnabled(False)
+        self.redo_button.clicked.connect(self.redo)
+
+        self.word_down_button = ActionButton("کلمه به خط بعد", "word-down", priority=1)
+        self.word_down_button.setToolTip(
+            "آخرین کلمه این خط را با زمانش می‌برد اول خط بعدی — Alt+Down"
+        )
+        self.word_down_button.clicked.connect(self.move_word_down)
+        self.word_up_button = ActionButton("کلمه به خط قبل", "word-up", priority=1)
+        self.word_up_button.setToolTip(
+            "اولین کلمه این خط را با زمانش می‌برد آخر خط قبلی — Alt+Up"
+        )
+        self.word_up_button.clicked.connect(self.move_word_up)
+
+        self.zwnj_button = ActionButton("نیم‌فاصله", "space", priority=2)
+        self.zwnj_button.setToolTip(
+            "نیم‌فاصله را داخل کلمه می‌گذارد: می‌رود، خونه‌دار.\n"
+            "میان‌بر: Ctrl+Space یا Shift+Space"
+        )
+        self.zwnj_button.clicked.connect(self.insert_zwnj)
+
+        self.glossary_button = ActionButton("دیکشنری", "book", priority=2)
+        self.glossary_button.setToolTip(
+            "کلمه‌ای که اصلاح کردی برای همه ویدیوهای بعدی هم اعمال می‌شود"
+        )
+        self.glossary_button.clicked.connect(self.teach_correction)
+
+        self.export_button = ActionButton(
+            f"ذخیره {self.config.suffix.lstrip('.').upper()}", "save", name="Primary", collapsible=False
+        )
+        self.export_button.setToolTip("زیرنویس را کنار ویدیو ذخیره می‌کند — Ctrl+S")
+        self.export_button.clicked.connect(self.export)
+
+    def _header(self) -> QWidget:
+        """Which file this is, what is left to check, and the way out.
+
+        Saving lives up here, at the end of the reading direction, where a
+        finished page is left -- and the row wraps instead of ever hiding it.
+        """
+        row = ResponsiveRow(spacing=theme.SPACE * 3)
+
+        titles = QWidget()
+        titles.setObjectName("Bare")
+        column = QVBoxLayout(titles)
         column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(theme.SPACE)
+        column.setSpacing(0)
+        caption = QLabel("ویرایش زیرنویس")
+        caption.setObjectName("Caption")
+        name = QLabel()
+        name.setObjectName("Title")
+        filename = Path(self.project.video_path).name
+        # Measured against the face the label will really use.
+        name.setText("\u2066" + name.fontMetrics().elidedText(filename, Qt.ElideMiddle, 300) + "\u2069")
+        name.setToolTip(str(self.project.video_path))
+        column.addWidget(caption)
+        column.addWidget(name)
+        row.add(titles)
+
+        self.position_chip = QLabel()
+        self.position_chip.setObjectName("Chip")
+        row.add(self.position_chip)
+        self.suspect_button = ActionButton("", "alert", name="ChipWarn", collapsible=False)
+        self.suspect_button.setIconSize(QSize(14, 14))
+        self.suspect_button.clicked.connect(self.jump_to_suspect)
+        row.add(self.suspect_button)
+
+        row.add_stretch()
+        row.add(self.style_box)
+        row.add(self.burn_button)
+        row.add(self.export_button)
+        self.header_row = row
+        return row
+
+    def _command_bar(self) -> QWidget:
+        """The editing commands, grouped by what they act on.
+
+        The old toolbar put whatever did not fit behind an overflow arrow, so
+        on a laptop screen most of these were simply gone. This row drops the
+        labels first and then wraps: every command stays one click away.
+        """
+        bar = ResponsiveRow()
+        for group in (
+            (self.undo_button, self.redo_button),
+            (self.split_button, self.merge_button, self.delete_button),
+            (self.word_up_button, self.word_down_button),
+            (self.zwnj_button, self.glossary_button, self.find_button),
+        ):
+            bar.add(Segment(*group))
+        self.command_bar = bar
+        return bar
+
+    def _video_pane(self) -> QWidget:
+        """The picture in a card, with its scrub bar and transport under it."""
+        pane = QFrame()
+        pane.setObjectName("Card")
+        column = QVBoxLayout(pane)
+        column.setContentsMargins(theme.SPACE * 2, theme.SPACE * 2, theme.SPACE * 2, theme.SPACE * 2)
+        column.setSpacing(theme.SPACE * 2)
         column.addWidget(self.video, stretch=1)
 
-        row = QHBoxLayout()
-        row.setSpacing(theme.SPACE * 2)
+        scrub = QHBoxLayout()
+        scrub.setSpacing(theme.SPACE * 2)
         self.slider = SeekSlider(Qt.Horizontal)
         self.slider.setRange(0, 0)
         self.slider.setLayoutDirection(Qt.LeftToRight)
         self.slider.sliderMoved.connect(self._slider_moved)
         self.clock = QLabel(f"{timecode(0)} / {timecode(0)}")
-        self.clock.setObjectName("Muted")
-        row.addWidget(self.slider, stretch=1)
-        row.addWidget(self.clock)
-        column.addLayout(row)
+        self.clock.setObjectName("Clock")
+        self.clock.setLayoutDirection(Qt.LeftToRight)
+        scrub.addWidget(self.slider, stretch=1)
+        scrub.addWidget(self.clock)
+        column.addLayout(scrub)
+
+        # Play in the middle, the two settings either side of it: the shape
+        # every media player has taught the hand to expect. The side button
+        # gets the switch's width so the play button really is centred.
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.addWidget(self.continuous_box)
+        controls.addStretch(1)
+        controls.addWidget(self.play_button)
+        controls.addStretch(1)
+        balance = QWidget()
+        balance.setObjectName("Bare")
+        balance.setMinimumWidth(self.continuous_box.sizeHint().width())
+        holder = QHBoxLayout(balance)
+        holder.setContentsMargins(0, 0, 0, 0)
+        holder.addStretch(1)
+        holder.addWidget(self.side_button)
+        controls.addWidget(balance)
+        column.addLayout(controls)
         return pane
 
     # ------------------------------------------------------- video placement
@@ -760,8 +975,12 @@ class EditorDialog(QDialog):
             sizes = [int(whole * 0.38), int(whole * 0.62)]
         kept = [int(s) for s in self._saved_state.get("splitter_side" if side else "splitter_top", [])]
         self.splitter.setSizes(kept if len(kept) == self.splitter.count() else sizes)
-        self.splitter.setStretchFactor(self.splitter.indexOf(self.table), 1)
+        self.splitter.setStretchFactor(self.splitter.indexOf(self.table_pane), 1)
+        # Side by side, a narrower window takes from both; with the picture on
+        # top it was squeezing only the table, down to a sliver.
+        self.splitter.setStretchFactor(self.splitter.indexOf(self.video_pane), 1 if side else 0)
         self.side_button.setText("تصویر بالا" if side else "تصویر کنار")
+        self.side_button.set_icon("rows" if side else "columns")
 
     def toggle_video_side(self) -> None:
         self.video_side_chosen = True
@@ -805,7 +1024,7 @@ class EditorDialog(QDialog):
             # made for a portrait video would stick to the next landscape one.
             if self.video_side_chosen:
                 state["video_side"] = self.video_side
-            self._ui_state_path().write_text(json.dumps(state), encoding="utf-8")
+            atomic_write_text(self._ui_state_path(), json.dumps(state))
         except Exception as error:  # noqa: BLE001 - saving a preference is not worth a crash
             log.debug("وضعیت پنجره ذخیره نشد: %s", error)
 
@@ -818,20 +1037,25 @@ class EditorDialog(QDialog):
         """
         from ..engine.locate import project_path
 
-        index = {id(word): position for position, word in enumerate(self.project.words)}
-        lines = []
-        for cue in self.cues:
-            positions = [index[id(w)] for w in cue.words if id(w) in index]
-            if positions:
-                lines.append(EditedLine(words=positions, text=cue.text, edited=cue.edited))
-        # An empty list is written too: it means "this subtitle has no lines
-        # any more". Returning early instead left the previous ones in the
-        # file, so deleting every line and reopening brought them all back.
-        self.project.lines = lines
+        if self.shaped:
+            index = {id(word): position for position, word in enumerate(self.project.words)}
+            lines = []
+            for cue in self.cues:
+                positions = [index[id(w)] for w in cue.words if id(w) in index]
+                if positions:
+                    lines.append(EditedLine(words=positions, text=cue.text, edited=cue.edited))
+            # An empty list is written too: it means "this subtitle has no
+            # lines any more". Returning early instead left the previous ones
+            # in the file, so deleting every line brought them all back.
+            self.project.lines = lines
+        elif self.project.lines:
+            self.project.lines = []  # hand lines given up for a style
+        elif not self.words_touched:
+            return  # nothing shaped by hand; the style still decides the lines
         try:
             target = project_path(self.project.video_path)
             self.project.save(target)
-            log.info("ویرایش‌ها ذخیره شد: %s (%d خط)", target, len(lines))
+            log.info("ویرایش‌ها ذخیره شد: %s (%d خط)", target, len(self.project.lines))
         except OSError as error:  # noqa: BLE001 - losing a preference beats a crash
             log.warning("ذخیره ویرایش‌ها ممکن نشد: %s", error)
 
@@ -844,6 +1068,7 @@ class EditorDialog(QDialog):
         if self._finished:
             return
         self._finished = True
+        self._stop_threads()
         self._save_project()
         self._save_ui_state()
         if self.player is not None:
@@ -937,9 +1162,19 @@ class EditorDialog(QDialog):
         )
         row = self.table.currentRow() if hasattr(self, "table") else -1
         where = f"خط {row + 1} از {len(self.cues)}" if row >= 0 else f"{len(self.cues)} خط"
-        self.summary.setText(
-            f"{where} | {shaky} کلمه مشکوک از {total_words} | "
-            f"F3 خط مشکوک بعدی | ویرایش متن زمان‌ها را تغییر نمی‌دهد"
+        self.position_chip.setText(to_persian_digits(where))
+        # One chip that is both the count and the way to the next one.
+        if shaky:
+            self.suspect_button.setText(to_persian_digits(f"{shaky} کلمه مشکوک"))
+            self.suspect_button.set_role("ChipWarn")
+            self.suspect_button.set_icon("alert")
+        else:
+            self.suspect_button.setText("همه کلمه‌ها مطمئن")
+            self.suspect_button.set_role("ChipOk")
+            self.suspect_button.set_icon("check")
+        self.suspect_button.setToolTip(
+            to_persian_digits(f"مدل به {shaky} کلمه از {total_words} مطمئن نبود.")
+            + "\nبرو سراغ خط مشکوک بعدی — F3"
         )
 
     def _reload(self, keep_row: int | None = None) -> None:
@@ -953,6 +1188,7 @@ class EditorDialog(QDialog):
         self.table.setUpdatesEnabled(True)
 
         self._cue_starts = [c.start for c in self.cues]
+        self._update_wave()
         self._update_summary()
         if keep_row is not None and self.table.rowCount():
             row = max(0, min(keep_row, self.table.rowCount() - 1))
@@ -995,23 +1231,26 @@ class EditorDialog(QDialog):
     def _text_edited(self, item: QTableWidgetItem) -> None:
         if item.column() != COL_TEXT:
             return
-        cue = self.cues[item.row()]
+        # Read once: `_reload` below replaces every item, and asking the old
+        # one for its row afterwards raised "C++ object already deleted".
+        row = item.row()
+        cue = self.cues[row]
         if cue.text != item.text().strip():
             self._snapshot()
         cue.text = item.text().strip()
         cue.edited = True
-        self.last_edited_row = item.row()
-        moved = self._rebalance_pair(item.row() - 1) | self._rebalance_pair(item.row())
+        self.last_edited_row = row
+        moved = self._rebalance_pair(row - 1) | self._rebalance_pair(row)
         if moved:
             # A word changed cue, so both spans moved: the whole table has to
             # be redrawn, not just this row.
-            self._reload(keep_row=item.row())
-            self._set_overlay_text(self.cues[item.row()].text)
+            self._reload(keep_row=row)
+            self._set_overlay_text(self.cues[row].text)
             return
         # The edit arrives while the cell editor is still open on this item:
         # replacing it here would pull the ground out from under the editor.
-        self._refresh_row(item.row(), keep_text_item=True)
-        if item.row() == self.table.currentRow():
+        self._refresh_row(row, keep_text_item=True)
+        if row == self.table.currentRow():
             self._set_overlay_text(cue.text)
 
     # -------------------------------------------------------------- playback
@@ -1088,6 +1327,7 @@ class EditorDialog(QDialog):
             return
         self._set_overlay_text(self.cues[row].text)
         self._update_summary()
+        self._update_wave(row)
         if self.player is None:
             return
         if self.following:
@@ -1107,6 +1347,8 @@ class EditorDialog(QDialog):
     def _position_changed(self, position_ms: int) -> None:
         self._stop_at_cue_end(position_ms)
         seconds = position_ms / 1000.0
+        if self.wave is not None:
+            self.wave.set_playhead(seconds)
         if self.slider is not None and not self.slider.isSliderDown():
             self.slider.setValue(position_ms)
             self.clock.setText(f"{timecode(seconds)} / {timecode(self.slider.maximum() / 1000.0)}")
@@ -1155,6 +1397,7 @@ class EditorDialog(QDialog):
             return
         playing = self.player.playbackState() == QMediaPlayer.PlayingState and not self.nudging
         self.play_button.setText(PAUSE_LABEL if playing else PLAY_LABEL)
+        self.play_button.set_icon("pause" if playing else "play")
 
     def _set_overlay_text(self, text: str) -> None:
         if self.video is None:
@@ -1177,15 +1420,35 @@ class EditorDialog(QDialog):
         """
         return [replace(cue, words=list(cue.words)) for cue in self.cues]
 
-    def _snapshot(self) -> None:
+    def _snapshot(self, times: list[Word] | None = None) -> None:
+        """Remember the lines before a change.
+
+        Snapshots share the Word objects, so a change to a word's own time (an
+        edge dragged on the waveform) passes those words in `times`, and their
+        start and end are kept beside the snapshot.
+        """
+        self.shaped = True
         self.history.append(self._copy_cues())
+        self._times_history.append([(w, w.start, w.end) for w in times or []])
         del self.history[:-50]  # a long session should not grow without bound
+        del self._times_history[:-50]
         self.redo_stack.clear()
+        self._times_redo.clear()
         self._update_history_buttons()
+
+    @staticmethod
+    def _swap_times(saved: list) -> list:
+        """Put saved word times back; return the ones they replaced."""
+        current = [(w, w.start, w.end) for w, _, _ in saved]
+        for word, start, end in saved:
+            word.start, word.end = start, end
+        return current
 
     def undo(self) -> None:
         if not self.history:
             return
+        times = self._times_history.pop() if self._times_history else []
+        self._times_redo.append(self._swap_times(times))
         self.redo_stack.append(self._copy_cues())
         self.cues = self.history.pop()
         self._reload()
@@ -1194,6 +1457,8 @@ class EditorDialog(QDialog):
     def redo(self) -> None:
         if not self.redo_stack:
             return
+        times = self._times_redo.pop() if self._times_redo else []
+        self._times_history.append(self._swap_times(times))
         self.history.append(self._copy_cues())
         self.cues = self.redo_stack.pop()
         self._reload()
@@ -1254,14 +1519,21 @@ class EditorDialog(QDialog):
 
         first = EditableCue(words=cue.words[:cut])
         second = EditableCue(words=cue.words[cut:])
-        if at_token is not None and len(tokens) == len(cue.words):
-            # Keep the words the user typed, not the raw model text.
-            first.text = " ".join(tokens[:cut])
-            second.text = " ".join(tokens[cut:])
+        if at_token is not None and 0 < at_token < len(tokens):
+            # The caret says exactly where the text breaks.
+            first.text = " ".join(tokens[:at_token])
+            second.text = " ".join(tokens[at_token:])
         else:
-            first.text = " ".join(w.text for w in first.words)
-            second.text = " ".join(w.text for w in second.words)
-        first.original, second.original = first.text, second.text
+            first.text, second.text = split_text(cue.text, cut, len(cue.words))
+        # Each half keeps its share of the baseline, so a correction made
+        # before the split can still be taught afterwards.
+        if cue.original and cue.original != cue.text:
+            first.original, second.original = split_text(cue.original, cut, len(cue.words))
+        else:
+            first.original, second.original = first.text, second.text
+        for half in (first, second):
+            if not half.text:  # nothing of the shown text fell on this side
+                half.text = half.original = " ".join(w.text for w in half.words)
         first.edited = second.edited = cue.edited
 
         self._snapshot()
@@ -1342,9 +1614,16 @@ class EditorDialog(QDialog):
             word = source.words.pop(0)
             target.words.append(word)
 
-        for cue in (source, target):
-            cue.text = " ".join(w.text for w in cue.words)
-            cue.original = cue.text
+        # The word's text travels with it, as shown on screen. Rebuilding both
+        # lines from the raw model words threw away every correction on them.
+        for attribute in ("text", "original"):
+            moved = _move_token(getattr(source, attribute), getattr(target, attribute), down)
+            if moved is None:
+                for cue in (source, target):
+                    setattr(cue, attribute, " ".join(w.text for w in cue.words))
+            else:
+                setattr(source, attribute, moved[0])
+                setattr(target, attribute, moved[1])
         self._reload(keep_row=row)
 
     def delete_selected(self) -> None:
@@ -1453,8 +1732,18 @@ class EditorDialog(QDialog):
         if answer != QMessageBox.Yes:
             return
 
-        for heard_word, correct_word in pairs:
-            path = add_correction(heard_word, correct_word)
+        try:
+            for heard_word, correct_word in pairs:
+                path = add_correction(heard_word, correct_word)
+        except OSError as error:
+            log.exception("دیکشنری ذخیره نشد")
+            QMessageBox.warning(
+                self,
+                "دیکشنری",
+                f"ذخیره در دیکشنری ممکن نشد:\n{error}\n\n"
+                "اگر فایل دیکشنری جای دیگری باز است ببندش و دوباره بزن.",
+            )
+            return
 
         self._snapshot()
         applied = self._apply_to_all(dict(pairs))
@@ -1484,36 +1773,246 @@ class EditorDialog(QDialog):
             self._reload(keep_row=skip_row)
         return changed
 
+    # ---------------------------------------------------------- live style
+
+    def _style_changed(self, index: int) -> None:
+        """Rebuild the lines in another style, on the spot."""
+        from dataclasses import replace
+
+        name = self.style_box.itemData(index)
+        if name in BUILTIN_PROFILES:
+            profile = replace(BUILTIN_PROFILES[name])
+        elif self.config.custom_profile is not None and name == self.config.custom_profile.name:
+            profile = replace(self.config.custom_profile)
+        else:
+            return
+        if self.shaped:
+            answer = QMessageBox.question(
+                self,
+                "تغییر سبک",
+                "خط‌های این زیرنویس را دستی شکل داده‌ای. با سبک تازه، تقسیم و ادغام‌ها و "
+                "متن‌های اصلاح‌شده کنار گذاشته می‌شوند (اصلاح‌های دیکشنری می‌مانند).\n\nادامه بدهم؟",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                self.style_box.blockSignals(True)
+                self.style_box.setCurrentIndex(max(0, self.style_box.findData(self.config.profile.name)))
+                self.style_box.blockSignals(False)
+                return
+        self.config.profile = profile
+        self.cues = cues_to_editable(
+            self.project, build_cues(self.project.words, profile, self.config.text)
+        )
+        # The new lines are the style's, not the user's; the hand-made ones
+        # cannot come back through undo, which the question above said.
+        self.shaped = False
+        self.history.clear()
+        self.redo_stack.clear()
+        self._times_history.clear()
+        self._times_redo.clear()
+        self._update_history_buttons()
+        self.last_seek_row = -1
+        self._reload(keep_row=0)
+
+    # ------------------------------------------------------------- waveform
+
+    def _start_waveform(self, media: Path) -> None:
+        if self.wave is None:
+            return
+        worker = EnvelopeWorker(media)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.ready.connect(self.wave.set_envelope, Qt.QueuedConnection)
+        worker.failed.connect(self.wave.set_failed, Qt.QueuedConnection)
+        worker.ready.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        self._wave_worker = worker  # kept alive until the thread ends
+        self.wave_thread = thread
+        thread.start()
+
+    def _update_wave(self, row: int | None = None) -> None:
+        if self.wave is None:
+            return
+        current = self.table.currentRow() if row is None else row
+        self.wave.set_lines([(c.start, c.end) for c in self.cues], current)
+
+    def _edge_moved(self, which: str, seconds: float) -> None:
+        row = self.table.currentRow()
+        if not (0 <= row < len(self.cues)):
+            return
+        cue = self.cues[row]
+        self._snapshot(times=[cue.words[0], cue.words[-1]])
+        move_edge(self.cues, row, which, seconds)
+        self.words_touched = True
+        self._refresh_row(row)
+        self._update_wave(row)
+
+    def _stop_threads(self) -> None:
+        """No thread may outlive the dialog: Qt kills the process for it."""
+        if self.wave_thread is not None:
+            self._wave_worker.cancel()
+            self.wave_thread.quit()
+            self.wave_thread.wait(10_000)
+        if self.burn_thread is not None:
+            self._burn_worker.cancel()
+            self.burn_thread.quit()
+            self.burn_thread.wait(30_000)
+
+    def _wave_seek(self, seconds: float) -> None:
+        self.stop_at = 0.0
+        self._seek(seconds)
+
+    # ------------------------------------------------------------- keywords
+
+    def keyword_texts(self, cue: "EditableCue") -> set[str]:
+        """Bare texts of the keywords in a line, when the style shows keywords."""
+        profile = self.config.profile
+        if not (profile.keyword_solo or profile.mode == "word"):
+            return set()
+        return {w.text.strip("،؛:.!؟…") for w in cue.words if w.keyword}
+
+    def _context_menu(self, position) -> None:
+        row = self.table.rowAt(position.y())
+        if not (0 <= row < len(self.cues)):
+            return
+        menu = QMenu(self)
+        keywords = menu.addMenu("کلمه کلیدی (سبک ریلز و کلمه به کلمه)")
+        for word in self.cues[row].words:
+            action = keywords.addAction(word.text)
+            action.setCheckable(True)
+            action.setChecked(bool(word.keyword))
+            action.toggled.connect(lambda on, w=word: self.set_keyword(w, on))
+        menu.addSeparator()
+        menu.addAction("جستجو و جایگزینی… (Ctrl+H)", self.find_replace)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def set_keyword(self, word: Word, on: bool) -> None:
+        """The user's own choice; the detector never overrides it."""
+        word.keyword = on
+        word.edited = True
+        self.words_touched = True
+        self._reload(keep_row=self.table.currentRow())
+
+    # ---------------------------------------------------------- find/replace
+
+    def find_replace(self) -> None:
+        FindReplaceDialog(self.replace_everywhere, self).exec()
+
+    def replace_everywhere(self, find: str, replacement: str, whole: bool, teach: bool) -> int:
+        # Counted first: a search that finds nothing must not leave a
+        # snapshot behind, which would mark the lines as shaped by hand.
+        if not any(replace_in_text(c.text, find, replacement, whole)[1] for c in self.cues):
+            return 0
+        self._snapshot()
+        count = replace_in_cues(self.cues, find, replacement, whole)
+        if teach and " " not in find:
+            try:
+                add_correction(find, replacement)
+            except OSError as error:
+                QMessageBox.warning(self, "دیکشنری", f"ذخیره در دیکشنری ممکن نشد:\n{error}")
+        self._reload(keep_row=self.table.currentRow())
+        return count
+
+    # ----------------------------------------------------------------- burn
+
+    def burn_video(self) -> None:
+        """Draw the subtitle into a copy of the video, on its own thread."""
+        from ..pipeline import output_path
+        from ..render.burn import burned_path
+
+        if self.burn_thread is not None:
+            return
+        cues = self.to_cues()
+        if not cues:
+            QMessageBox.warning(self, "ویدیو با زیرنویس", "خط قابل نمایشی نمانده است.")
+            return
+        video = Path(self.project.video_path)
+        target = burned_path(output_path(video, self.config, ".srt"))
+        if self.player is not None:
+            self.player.pause()
+
+        progress = QProgressDialog("در حال ساخت ویدیو با زیرنویس…", "لغو", 0, 100, self)
+        progress.setWindowTitle("ویدیو با زیرنویس")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker = BurnWorker(video, cues, self.config.ass_style, target)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(progress.setValue, Qt.QueuedConnection)
+        worker.finished.connect(self._burn_done, Qt.QueuedConnection)
+        worker.failed.connect(self._burn_failed, Qt.QueuedConnection)
+        worker.stopped.connect(self._burn_stopped, Qt.QueuedConnection)
+        for signal in (worker.finished, worker.failed, worker.stopped):
+            signal.connect(thread.quit)
+        thread.finished.connect(self._burn_thread_ended, Qt.QueuedConnection)
+        # Through a slot of this dialog, on the GUI thread: connected to the
+        # worker itself the request would queue behind the burn it is meant
+        # to stop, and never arrive.
+        progress.canceled.connect(self._cancel_burn)
+        self._burn_worker, self._burn_progress = worker, progress
+        self.burn_thread = thread
+        self.burn_button.setEnabled(False)
+        thread.start()
+
+    def _cancel_burn(self) -> None:
+        if self.burn_thread is not None:
+            self._burn_worker.cancel()
+
+    def _burn_done(self, path: str) -> None:
+        self._burn_progress.reset()
+        QMessageBox.information(self, "ویدیو آماده شد", path)
+
+    def _burn_failed(self, message: str) -> None:
+        self._burn_progress.reset()
+        QMessageBox.warning(self, "ساخت ویدیو انجام نشد", message)
+
+    def _burn_stopped(self) -> None:
+        self._burn_progress.reset()
+
+    def _burn_thread_ended(self) -> None:
+        if self.burn_thread is not None:
+            self.burn_thread.wait(5000)
+        self.burn_thread = None
+        self.burn_button.setEnabled(True)
+
     # --------------------------------------------------------------- export
 
     def to_cues(self) -> list[Cue]:
-        out: list[Cue] = []
-        for index, cue in enumerate(self.cues, start=1):
-            text = cue.text.strip()
-            if not text:
-                continue
-            out.append(
-                Cue(
-                    index=index,
-                    start=cue.start,
-                    end=cue.end,
-                    lines=wrap_lines(text, self.config.profile),
-                )
-            )
-        return out
+        """The lines as cues, timed by the same rules as a rendered style.
+
+        Writing the raw word times out left one-word lines on screen for a
+        fifth of a second, and a subtitle exported from here timed
+        differently from the very same lines rendered by the pipeline.
+        """
+        return cues_from_lines([(cue.words, cue.text) for cue in self.cues], self.config.profile)
 
     def export(self) -> None:
         from ..pipeline import output_path
         from pathlib import Path
 
+        from ..pipeline import video_frame
+        from ..render.writers import DEFAULT_FRAME
+
         cues = self.to_cues()
         if not cues:
-            QMessageBox.warning(self, "ذخیره SRT", "خط قابل ذخیره‌ای نمانده است.")
+            QMessageBox.warning(self, "ذخیره زیرنویس", "خط قابل ذخیره‌ای نمانده است.")
             return
 
-        target = output_path(Path(self.project.video_path), self.config, ".srt")
+        suffix = self.config.suffix
+        target = output_path(Path(self.project.video_path), self.config, suffix)
         try:
-            write_subtitle(cues, target, bom=self.config.text.bom)
+            write_subtitle(
+                cues,
+                target,
+                bom=self.config.text.bom,
+                style=self.config.ass_style,
+                frame=video_frame(self.project.video_path) if suffix == ".ass" else DEFAULT_FRAME,
+            )
         except OSError as error:
             # A read-only folder, or the file still open in another program.
             log.exception("نوشتن زیرنویس شکست خورد: %s", target)

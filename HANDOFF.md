@@ -7,13 +7,32 @@
 ```
 نسخه نصب‌شده : %LOCALAPPDATA%\Programs\FarsiSub\FarsiSub.exe
 از سورس       : C:\Users\Erfan\projects\farsi-sub\FarsiSub.bat
-تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۸۹ تست)
+تست‌ها        : .venv\Scripts\python.exe tests\run_tests.py     (۱۶۷ تست)
 بیلد          : .venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
 بررسی بسته    : .venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
 نصاب          : "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
 ```
 
-نسخه فعلی: **۱.۱.۳** — `dist\FarsiSub-1.1.3-Setup.exe` (۴۱۰ مگابایت)
+نسخه فعلی: **۱.۸.۰** — `dist\FarsiSub-1.8.0-Setup.exe` (شماره نسخه: `src/farsisub/__init__.py` و `installer/farsisub.iss`؛ تغییرات در `CHANGELOG.md`)
+
+## انتشار نسخه تازه
+
+**خودکار (پیشنهادی):** هر push به شاخه‌های `claude/**` یا `master` در گیت‌هاب (Actions → «Windows installer») نصاب را می‌سازد؛ فایل در بخش Artifacts همان اجراست. push یک tag مثل `v1.6.0` همین کار را می‌کند و یک Release هم می‌سازد. فایل: `.github/workflows/build-windows.yml`. نسخه موتور در همان فایل ثابت شده (`ENGINE_VERSION`، الان v1.8.2): آخرین ریلیز whisper.cpp (v1.9.4) فایل CUDA ویندوز ندارد.
+
+**دستی، روی ویندوز:**
+
+```
+git pull                                                   (شاخه نسخه)
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python.exe tests\run_tests.py                 همه باید سبز باشد
+.venv\Scripts\python.exe -m PyInstaller installer\farsisub.spec --noconfirm --distpath dist --workpath build\pyi
+.venv\Scripts\python.exe installer\verify_build.py dist\FarsiSub
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\farsisub.iss
+```
+
+بعد از نصب و چک دستی: PR را در main ادغام کن، tag `v1.6.0` بزن و در GitHub → Releases یک انتشار تازه با `dist\FarsiSub-1.6.0-Setup.exe` و متن همان بخش از `CHANGELOG.md` بساز.
+
+چک دستی قبل از انتشار: یک ویدیوی واقعی (یکی افقی، یکی عمودی از موبایل) با هر چهار سبک؛ لغو وسط پردازش؛ «ویدیو با زیرنویس» روی ویدیوی موبایل (نباید کج شود)؛ خروجی ASS در VLC؛ تغییر تم و بستن و باز کردن برنامه (تنظیمات باید بماند).
 
 ## داده‌ها
 
@@ -25,6 +44,10 @@ data\projects\      فایل‌های .fsub — کلمات، زمان‌ها، �
 data\logs\          farsisub.log و crash.log
 data\glossary.json  اصلاح‌های یادگرفته‌شده
 ```
+
+## هویت بصری
+
+آرم در `src/farsisub/brand.py` کشیده می‌شود (همراه نام سازنده و لینک پروژه). فایل‌های `assets/brand/` (ico، تصاویر نصاب) را `tools/make_brand.py` از همان تابع می‌سازد و commit شده‌اند؛ اگر آرم عوض شد همان اسکریپت را دوباره اجرا کن. نصاب فارسی است (`installer/Farsi.isl`)؛ فایل‌های `.iss` و `.isl` باید UTF-8 با BOM بمانند.
 
 ## معماری
 
@@ -45,6 +68,7 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 | ترکیب دو مدل و داوری تکرار | `src/farsisub/render/merge.py` |
 | نگارش فارسی | `src/farsisub/text/normalize.py`، `corrections.py` |
 | ویرایشگر | `src/farsisub/gui/editor.py` |
+| ظاهر: رنگ‌ها، استایل، آیکون‌ها، دکمه و ردیف‌های تاشونده | `src/farsisub/gui/theme.py`، `icons.py`، `widgets.py` |
 
 ## چه چیزی کار می‌کند
 
@@ -74,6 +98,10 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 
 اینها همه اندازه‌گیری شده‌اند، نه حدس. تغییرشان بدون دلیل، باگ‌های قدیمی را برمی‌گرداند:
 
+- **هیچ دکمه‌ای پشت منوی سرریز نمی‌رود.** ردیف‌های دکمه `ResponsiveRow` هستند (`gui/widgets.py`): اول برچسب دکمه‌های با `priority` کمتر برداشته می‌شود، بعد ردیف به خط دوم می‌رود. `QToolBar` عمداً کنار گذاشته شد؛ تست `test_every_editor_command_is_on_screen_in_a_small_window` همین را نگه می‌دارد.
+- **`QWidgetItem` متد `sizePolicy()` ندارد.** خطای پایتون داخل override یک `QLayout` در PySide 6.11 کل برنامه را با segfault می‌بندد، نه با traceback.
+- **محتوای `ActionButton` را خودمان می‌کشیم.** `QToolButton` در راست‌به‌چپ آیکون را سمت اشتباه می‌گذاشت و کنارش فاصله خالی می‌ماند؛ قاب و hover هنوز از استایل‌شیت می‌آید.
+- آیکون‌ها کد هستند (`gui/icons.py`)، مثل آرم؛ فایلی به نصاب اضافه نمی‌شود. فقط فلش منوهای کشویی یک PNG موقت است چون استایل‌شیت جز فایل چیزی نمی‌گیرد.
 - **`-dtw` باید با `-nfa` بیاید.** flash attention در whisper.cpp تایم‌استمپ کلمه‌ای را بی‌صدا خاموش می‌کند و همه `t_dtw`ها منفی یک برمی‌گردند.
 - **VAD داخلی whisper.cpp استفاده نمی‌شود.** با `--vad` کلمات بعد از سه ثانیه سکوت حدود ۳.۵ ثانیه زودتر برگشتند. حذف توهم روی سکوت با نوار انرژی خودمان انجام می‌شود.
 - **زمان توکن‌ها بر حسب صدم ثانیه است**، نه میلی‌ثانیه.
@@ -84,4 +112,6 @@ data\glossary.json  اصلاح‌های یادگرفته‌شده
 - **`%LOCALAPPDATA%` برای پروسه‌های سندباکس بازنویسی می‌شود.** داده‌ها عمداً کنار برنامه‌اند.
 - **سیگنال Qt را با lambda وصل نکن.** بدون شیء گیرنده، اسلات روی نخ کارگر اجرا می‌شود و دست زدن به ویجت از آنجا access violation است.
 - **الگوی حذف در Inno بدون لنگر، هر پوشه هم‌نام را می‌گیرد** — یک بار `_internal\hazm\data` را برد و برنامه سر اولین جمله فارسی مرد.
+- **`Cancelled` عمداً `BaseException` است.** مدل دوم و بازیابی حفره‌ها هر `Exception` را می‌گیرند تا شکست آن‌ها رونویسی اول را نبرد؛ لغوی که از `RuntimeError` بود همان‌جا بلعیده می‌شد و پردازش تا آخر ادامه پیدا می‌کرد. لغو هم باید پروسه whisper-cli را بکشد (`whispercpp.stop_running`)، وگرنه روی GPU می‌ماند.
+- **ادامه خودکار صف فقط فایل‌های «در صف» را برمی‌دارد.** برداشتن فایل‌های «خطا» یعنی فایل لغوشده بلافاصله از نو شروع می‌شد و فایل خراب بی‌نهایت تکرار.
 - **مدل فاین‌تیون فارسی بهتر نبود.** روی دو ویدیو: پوشش کمتر، اطمینان کمتر، و نوشتار محاوره‌ای («چیو»، «بهرانو»). `large-v3` پیش‌فرض ماند.

@@ -28,6 +28,7 @@ REQUIRED = [
     "_internal/hazm/data/words.dat",
     "_internal/hazm/data/verbs.dat",
     "_internal/assets/fonts/Vazirmatn-Regular.ttf",
+    "_internal/assets/brand/farsisub.ico",
     "_internal/base_library.zip",
     # Playback inside the editor: without these the video panel stays black.
     "_internal/PySide6/plugins/multimedia/ffmpegmediaplugin.dll",

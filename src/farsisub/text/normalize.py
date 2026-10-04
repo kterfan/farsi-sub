@@ -42,7 +42,10 @@ _LATIN_PUNCT = str.maketrans({",": "،", ";": "؛", "?": "؟"})
 # with it in ordinary Persian, unlike the decorative harakat.
 _DIACRITICS = re.compile("[\u064c-\u0652\u0653-\u0655\u0670]")
 _KASHIDA = re.compile("\u0640+")
-_REPEATED = re.compile(r"(.)\1{2,}")
+# Stretched speech ("\u0633\u0644\u0627\u0645\u0645\u0645") collapses to one letter. Letters of the Persian
+# script only: an "any character" pattern turned "1000" into "10" and "\u06f5\u06f0\u06f0\u06f0
+# \u062a\u0648\u0645\u0627\u0646" into "\u06f5\u06f0 \u062a\u0648\u0645\u0627\u0646".
+_REPEATED = re.compile(r"(?=[\u0600-\u06ff])([^\W\d_])\1{2,}")
 
 # Space before punctuation is always wrong; space after is always required.
 _SPACE_BEFORE_PUNCT = re.compile(r"\s+([،؛؟!\.:])")

@@ -10,11 +10,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import BUILTIN_PROFILES, AppConfig
 from .logging_setup import setup as setup_logging
 from .engine import locate
 from .models import Project
-from .pipeline import PipelineError, output_path, process, render
+from .pipeline import PipelineError, process, render
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="large-v3", help="نام مدل")
     parser.add_argument("--language", default="fa", help="زبان صدا (پیش‌فرض فارسی)")
     parser.add_argument("--output-dir", help="پوشه خروجی (پیش‌فرض: کنار ویدیو)")
-    parser.add_argument("--format", default="srt", choices=["srt", "vtt", "txt"])
+    parser.add_argument("--format", default="srt", choices=["srt", "vtt", "ass", "txt"])
     parser.add_argument("--latin-digits", action="store_true", help="ارقام لاتین به‌جای فارسی")
     parser.add_argument("--keep-period", action="store_true", help="نقطه انتهای جمله حفظ شود")
     parser.add_argument("--no-bom", action="store_true", help="بدون BOM در فایل خروجی")
@@ -44,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--list-fixes", action="store_true", help="نمایش دیکشنری اصلاحات")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--version", action="version", version=f"FarsiSub {__version__}")
     return parser
 
 
@@ -101,7 +103,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.render_only or source.suffix.lower() == ".fsub":
-            project = Project.load(source)
+            try:
+                project = Project.load(source)
+            except (OSError, ValueError, KeyError) as error:
+                raise PipelineError(f"فایل پروژه خوانده نشد: {source} ({error})") from error
+            if project.lines and not args.quiet:
+                print(
+                    "این پروژه در ویرایشگر شکل داده شده؛ همان خط‌ها نوشته می‌شود "
+                    "و سبک فقط شکست سطر را تعیین می‌کند.",
+                    file=sys.stderr,
+                )
             written = render(project, config, suffix=suffix)
         else:
             _, written = process(
@@ -112,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
                 on_progress=None if args.quiet else progress,
             )
     except PipelineError as error:
+        print(f"\nخطا: {error}", file=sys.stderr)
+        return 1
+    except OSError as error:  # an output folder that cannot be written, say
         print(f"\nخطا: {error}", file=sys.stderr)
         return 1
 

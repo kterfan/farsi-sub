@@ -287,3 +287,97 @@ def test_deleting_every_line_does_not_leave_old_ones_in_the_file():
         dialog.delete_selected()
     dialog.close()
     assert Project.load(locate.project_path(video)).lines == []
+
+
+def _isolated_data():
+    """Point the app's data folder at a fresh temp dir; returns a restore function."""
+    import os
+    import tempfile
+
+    previous = os.environ.get("FARSISUB_DATA")
+    os.environ["FARSISUB_DATA"] = tempfile.mkdtemp()
+
+    def restore() -> None:
+        if previous is None:
+            os.environ.pop("FARSISUB_DATA", None)
+        else:
+            os.environ["FARSISUB_DATA"] = previous
+
+    return restore
+
+
+def test_just_opening_the_editor_does_not_freeze_the_style():
+    # Closing an untouched editor used to save its auto-built lines, and from
+    # then on switching to another style changed nothing in the editor.
+    from farsisub.config import AppConfig
+    from farsisub.engine import locate
+    from farsisub.gui.editor import EditorDialog
+    from farsisub.models import Project
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    restore = _isolated_data()
+    try:
+        video = "clip.mp4"
+        stream = [
+            Word(text=t, start=i * 0.5, end=i * 0.5 + 0.4, probability=0.9)
+            for i, t in enumerate("یک دو سه چهار".split())
+        ]
+        project = Project(video_path=video, words=stream)
+        EditorDialog(project, AppConfig()).close()
+        assert project.lines == []
+        assert not locate.project_path(video).exists()
+    finally:
+        restore()
+
+
+def test_splitting_keeps_the_writing_rules_of_the_shown_line():
+    # Without a caret the halves were rebuilt from the raw model words: Latin
+    # digits and the dropped comma came back.
+    dialog = _dialog("سال 1404، خیلی سخت گذشت برای همه ما")
+    shown = dialog.cues[0].text
+    assert "۱۴۰۴" in shown and "،" not in shown
+    dialog.table.setCurrentCell(0, 4)
+    dialog.split_selected()
+    joined = " ".join(cue.text for cue in dialog.cues)
+    assert joined == shown
+
+
+def test_moving_a_word_keeps_corrections_on_both_lines():
+    dialog = _eight_words()
+    dialog.table.setCurrentCell(0, 4)
+    dialog.split_selected()
+    dialog.cues[0].text = dialog.cues[0].text.replace("یک", "یکم")
+    dialog.cues[1].text = dialog.cues[1].text.replace("هشت", "هشتم")
+    dialog.table.setCurrentCell(0, 4)
+    dialog.move_word_down()
+    assert dialog.cues[0].text.split()[0] == "یکم"
+    assert dialog.cues[1].text.split()[-1] == "هشتم"
+    assert dialog.cues[1].text.split()[0] == "چهار"
+    assert [w.text for w in dialog.cues[1].words][0] == "چهار"
+
+
+def test_an_exported_one_word_line_stays_on_screen_long_enough():
+    # Export wrote the raw word times: a lone "آره" flashed for 0.2 s even
+    # with three seconds of silence after it.
+    from farsisub.config import AppConfig
+    from farsisub.gui.editor import EditorDialog
+    from farsisub.models import Project
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    stream = [
+        Word(text="آره", start=0.0, end=0.2, probability=0.9),
+        Word(text="بعدش", start=3.0, end=3.4, probability=0.9),
+        Word(text="رفتیم", start=3.5, end=3.9, probability=0.9),
+        Word(text="خونه", start=4.0, end=4.4, probability=0.9),
+    ]
+    dialog = EditorDialog(Project(video_path="x.mp4", words=stream), AppConfig())
+    dialog.table.setCurrentCell(0, 4)
+    dialog.split_selected()
+    dialog.table.setCurrentCell(0, 4)
+    while len(dialog.cues[0].words) > 1:
+        dialog.move_word_down()
+    assert [w.text for w in dialog.cues[0].words] == ["آره"]
+    first = dialog.to_cues()[0]
+    assert first.end - first.start >= dialog.config.profile.min_duration - 1e-9

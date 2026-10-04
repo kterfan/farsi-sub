@@ -4,7 +4,7 @@ Layout used at runtime:
 
     <install dir>/bin/whisper-cli.exe          shipped in the installer
     <install dir>/bin/ggml-silero-v5.1.2.bin   shipped (885 KB, no reason to download)
-    %LOCALAPPDATA%/FarsiSub/models/*.bin       downloaded on first run
+    <install dir>/data/models/*.bin            downloaded on first run (see data_dir)
 
 During development everything can be overridden with environment variables so
 the same code runs from a source checkout.
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 APP_NAME = "FarsiSub"
@@ -64,11 +65,23 @@ def data_dir() -> Path:
     override = os.environ.get("FARSISUB_DATA")
     if override:
         return Path(override)
+    return _default_data_dir()
 
+
+@lru_cache(maxsize=1)
+def _default_data_dir() -> Path:
+    """Decided once per process.
+
+    This is asked for on every button refresh and every time the window is
+    activated; probing the disk each time wrote and deleted a file again and
+    again. The probe name is per process: two copies starting together (the
+    app and a CLI run) once tripped over one shared probe file on Windows,
+    and the loser quietly fell back to the other folder.
+    """
     local = install_dir() / "data"
     try:
         local.mkdir(parents=True, exist_ok=True)
-        probe = local / ".writable"
+        probe = local / f".writable-{os.getpid()}"
         probe.write_text("", encoding="utf-8")
         probe.unlink()
         return local
@@ -150,6 +163,16 @@ def whisper_binary() -> Path | None:
     name = "whisper-cli.exe" if os.name == "nt" else "whisper-cli"
     candidate = bin_dir() / name
     return candidate if candidate.exists() else None
+
+
+def has_cuda() -> bool:
+    """Whether the shipped engine carries the NVIDIA backend.
+
+    Only says the engine can use a GPU; whisper-cli still falls back to the
+    CPU on its own when the driver or the VRAM is not there.
+    """
+    folder = bin_dir()
+    return any((folder / name).exists() for name in ("ggml-cuda.dll", "libggml-cuda.so"))
 
 
 def vad_model() -> Path | None:

@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .fileio import atomic_write_text
+
 SCHEMA_VERSION = 1
 
 
@@ -70,6 +72,9 @@ class Cue:
     # Indices into the source WordStream, so the editor can walk back from a
     # cue to the words (and their confidences) that produced it.
     word_range: tuple[int, int] | None = None
+    # A keyword standing alone on screen; styled outputs (ASS, burned-in
+    # video) give it its own colour.
+    keyword: bool = False
 
     @property
     def text(self) -> str:
@@ -158,9 +163,8 @@ class Project:
         )
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8"
-        )
+        # Atomic: a half-written project would cost a full re-transcription.
+        atomic_write_text(path, json.dumps(self.to_dict(), ensure_ascii=False, indent=1))
 
     @classmethod
     def load(cls, path: str | Path) -> "Project":
