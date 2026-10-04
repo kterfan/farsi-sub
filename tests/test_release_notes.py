@@ -48,3 +48,24 @@ def test_the_real_changelogs_have_the_current_version():
     english = (ROOT / "CHANGELOG.en.md").read_text(encoding="utf-8")
     assert tool.section(persian, __version__.translate(tool.PERSIAN_DIGITS))
     assert tool.section(english, __version__)
+
+
+def test_a_tag_that_is_not_the_program_version_is_refused(tmp_path=None):
+    import subprocess
+    import tempfile
+
+    out = Path(tempfile.mkdtemp()) / "notes.md"
+    bad = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "release_notes.py"), "v0.0.1", str(out)],
+        capture_output=True,
+    )
+    assert bad.returncode == 1 and not out.exists()
+
+    from farsisub import __version__
+
+    good = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "release_notes.py"), f"v{__version__}", str(out)],
+        capture_output=True,
+    )
+    assert good.returncode == 0
+    assert "تغییرات این نسخه" in out.read_text(encoding="utf-8")

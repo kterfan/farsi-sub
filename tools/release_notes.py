@@ -1,6 +1,9 @@
 """Write the text of a GitHub Release: how to install, then what changed.
 
-    python tools/release_notes.py v1.8.0 > release-notes.md
+    python tools/release_notes.py v1.8.0 release-notes.md
+
+Writes the file itself, as UTF-8: a shell redirect on Windows re-encodes
+Persian text through the console code page.
 
 The workflow used to publish the whole changelog as the release body, which
 put every old version's notes under the newest download. This keeps the page
@@ -56,15 +59,32 @@ def render(version: str, persian_log: str, english_log: str) -> str:
     return "\n\n".join(parts) + "\n"
 
 
+def package_version() -> str:
+    text = (ROOT / "src" / "farsisub" / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'^__version__ = "([^"]+)"', text, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: release_notes.py v1.8.0", file=sys.stderr)
+    if len(argv) not in (2, 3):
+        print("usage: release_notes.py v1.8.0 [output-file]", file=sys.stderr)
         return 2
+    # A release named v1.9.0 that ships a 1.8.0 installer would be a lie.
+    if argv[1].lstrip("v") != package_version():
+        print(
+            f"tag {argv[1]} does not match the program version {package_version()}",
+            file=sys.stderr,
+        )
+        return 1
     persian = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     english_path = ROOT / "CHANGELOG.en.md"
     english = english_path.read_text(encoding="utf-8") if english_path.exists() else ""
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stdout.write(render(argv[1], persian, english))
+    text = render(argv[1], persian, english)
+    if len(argv) == 3:
+        Path(argv[2]).write_text(text, encoding="utf-8")
+    else:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stdout.write(text)
     return 0
 
 
